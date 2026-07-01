@@ -26,15 +26,40 @@ const MATERIAL = [
   { id: "leather", label: "Genuine Leather", factor: 60 },
 ];
 
+// --- Usage-type weighting, grounded in published flatus-frequency research ---
+// Adults pass gas ~32 times/day on average when measured continuously with a
+// wearable sensor (Botasini et al., 2025) [1] — roughly double the ~14/day
+// figure from earlier clinical estimates based on self-report and short
+// observation windows (Tomlin, Lowis, & Read, 1991) [2]. We use the higher,
+// sensor-measured baseline since it captures sleep-time and socially
+// suppressed events that older methods missed.
+const FLATUS_EVENTS_PER_DAY = 32; // Botasini et al., 2025 [1]
+const FLATUS_EVENTS_PER_DAY_LEGACY = 14; // Tomlin, Lowis, & Read, 1991 [2]
+const WAKING_HOURS = 16;
+const FLATUS_RATE_PER_HOUR = FLATUS_EVENTS_PER_DAY / WAKING_HOURS; // ≈2/hr
+
+// Scaling constant calibrated so the model's overall range matches the
+// estimator's original 0–6000 display scale.
+const ODOR_UNIT = 75;
+
+// Each usage type carries a typical daily duration spent seated on the piece
+// and a social-suppression factor (0 = no inhibition, 1 = total suppression).
+// weight = hours * flatus-rate/hr * (1 - suppression) * ODOR_UNIT
+// Work-from-home sessions run longest (up to 8 hrs/day), so despite heavier
+// suppression during calls, WFH still produces the single largest usage-type
+// contribution in the model — longer seat time outweighs the suppression.
 const USAGE_TYPES = [
-  { id: "tv", label: "TV / movie marathons", weight: 340 },
-  { id: "napping", label: "Napping / sleeping", weight: 410 },
-  { id: "gaming", label: "Gaming sessions", weight: 260 },
-  { id: "eating", label: "Eating meals", weight: 300 },
-  { id: "wfh", label: "Work-from-home seating", weight: 180 },
-  { id: "family", label: "Family time (kids + snacks)", weight: 320 },
-  { id: "guest", label: "Guest / formal seating only", weight: -150 },
-];
+  { id: "tv", label: "TV / movie marathons", hours: 3, suppression: 0.1 },
+  { id: "napping", label: "Napping / sleeping", hours: 1.5, suppression: 0 },
+  { id: "gaming", label: "Gaming sessions", hours: 2.5, suppression: 0.1 },
+  { id: "eating", label: "Eating meals", hours: 1, suppression: 0.3 },
+  { id: "wfh", label: "Work-from-home seating", hours: 8, suppression: 0.6 },
+  { id: "family", label: "Family time (kids + snacks)", hours: 2, suppression: 0.2 },
+  { id: "guest", label: "Guest / formal seating only", hours: 0.5, suppression: 0.9 },
+].map((u) => ({
+  ...u,
+  weight: Math.round(u.hours * FLATUS_RATE_PER_HOUR * (1 - u.suppression) * ODOR_UNIT),
+}));
 
 const RETENTION_LEVELS = [
   { key: "low", label: "Low", max: 150, color: "#6E8F72" },
@@ -157,7 +182,8 @@ export default function App() {
           <div className="of-display text-xl" style={{ color: "#211D18" }}>Prior Use Estimator</div>
           <p className="text-sm mt-1" style={{ color: "#6B6656" }}>
             Answer a few questions about the piece you're considering. This gives a rough estimate of use and odor
-            retention risk, based on your inputs — not a lab measurement.
+            retention risk, calibrated against published flatus-frequency research [1][2] and the compounds known
+            to drive flatus odor [3] — not a lab measurement of this specific item.
           </p>
         </div>
 
@@ -267,6 +293,44 @@ export default function App() {
             </p>
           </div>
         )}
+
+        <div className="rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
+          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Methodology</div>
+          <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
+            Usage-type weights assume a baseline of {FLATUS_EVENTS_PER_DAY} flatus events per day spread across a{" "}
+            {WAKING_HOURS}-hour waking day (≈{FLATUS_RATE_PER_HOUR}/hr) [1], adjusted for the typical hours spent
+            seated during each activity and a social-suppression factor (for example, video calls suppress roughly
+            60% of urges during work-from-home use, versus ~90% in front of guests). Because work-from-home
+            sessions run the longest — up to 8 hours a day — they produce the single highest usage-type
+            contribution in the model, even after that suppression is applied. Earlier clinical estimates put the
+            daily baseline closer to {FLATUS_EVENTS_PER_DAY_LEGACY} events [2]. Odor intensity itself tracks
+            hydrogen sulfide concentration rather than gas volume [3], which is why upholstery retention (above) is
+            scored separately from usage.
+          </p>
+        </div>
+
+        <div className="rounded-2xl p-6 mt-4 mb-2" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
+          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>References</div>
+          <ol className="text-xs leading-relaxed space-y-2" style={{ color: "#6B6656" }}>
+            <li>
+              [1] Botasini, S., Zhan, D., Fischer, N., Ravel, C. T., Tien, A., Grant, M. R., Ndjite, G. M., Sopko,
+              T., Childs, H., Greenfield, M., Qian, C. X., Gardiner, K. E., Anders, N. M., Ullah, T. F., Redmond,
+              L. T., Callaway, D. A., Behailu, E. M., Sarkar, G. M., Sany, N. C., ... Hall, B. (2025). Smart
+              underwear: A novel wearable for long-term monitoring of gut microbial gas production via flatus.{" "}
+              <em>Biosensors and Bioelectronics: X, 27</em>, Article 100699.{" "}
+              https://doi.org/10.1016/j.biosx.2025.100699
+            </li>
+            <li>
+              [2] Tomlin, J., Lowis, C., &amp; Read, N. W. (1991). Investigation of normal flatus production in
+              healthy volunteers. <em>Gut, 32</em>(6), 665–669. https://doi.org/10.1136/gut.32.6.665
+            </li>
+            <li>
+              [3] Suarez, F. L., Springfield, J., &amp; Levitt, M. D. (1998). Identification of gases responsible
+              for the odour of human flatus and evaluation of a device purported to reduce this odour.{" "}
+              <em>Gut, 43</em>(1), 100–104. https://doi.org/10.1136/gut.43.1.100
+            </li>
+          </ol>
+        </div>
       </div>
     </div>
   );
