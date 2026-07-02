@@ -108,8 +108,16 @@ const TIERS = [
 const RING_LOG_MIN = 2;
 const RING_LOG_MAX = 6.5;
 
-const DIGIT_HEIGHT = 38;
-const DIGIT_WIDTH = 22;
+const DIGIT_HEIGHT = 44;
+const DIGIT_WIDTH = 26;
+
+// Log-scale calibration: the dial sweeps 10² … 10^6.5 across 360°. Majors sit
+// at each power of ten; minors are cosmetic graduations between them.
+const GAUGE_MAJORS = [2, 3, 4, 5, 6].map((exp) => ({
+  exp,
+  deg: ((exp - RING_LOG_MIN) / (RING_LOG_MAX - RING_LOG_MIN)) * 360,
+}));
+const GAUGE_MINORS = Array.from({ length: 36 }, (_, i) => i * 10);
 
 function allowedForFurniture(furnitureId, usageId) {
   const f = FURNITURE.find((x) => x.id === furnitureId);
@@ -120,6 +128,7 @@ function OdometerDigit({ digit }) {
   return (
     <div style={{ height: DIGIT_HEIGHT, width: DIGIT_WIDTH, overflow: "hidden" }}>
       <div
+        className="of-roll"
         style={{
           transform: `translateY(-${digit * DIGIT_HEIGHT}px)`,
           transition: "transform 700ms cubic-bezier(.22,.9,.24,1)",
@@ -148,26 +157,197 @@ function OdometerReadout({ value }) {
   const chars = value.toLocaleString().split("");
   return (
     <div
-      className="of-display inline-flex items-center rounded-md px-2.5"
+      className="of-display inline-flex items-center relative"
       style={{
-        background: "#1C1A16",
-        boxShadow: "inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 0 rgba(255,255,255,0.05)",
-        fontSize: 26,
+        background: "linear-gradient(#0c0a07, #1b1710)",
+        border: "1px solid #4b4130",
+        borderRadius: 7,
+        padding: "5px 10px",
+        overflow: "hidden",
+        boxShadow:
+          "inset 0 3px 8px rgba(0,0,0,0.85), inset 0 -1px 0 rgba(255,255,255,0.05), 0 1px 0 rgba(255,255,255,0.4), 0 2px 5px rgba(33,29,24,0.35)",
+        fontSize: 32,
         fontWeight: 700,
-        color: "#F4EFE4",
+        color: "#F2DAA0",
+        textShadow: "0 0 7px rgba(242,218,160,0.32)",
         height: DIGIT_HEIGHT + 12,
       }}
     >
       {chars.map((c, i) =>
         c === "," ? (
-          <span key={i} style={{ color: "#8A8375", width: 8, textAlign: "center" }}>,</span>
+          <span key={i} style={{ color: "#7c7052", width: 9, textAlign: "center" }}>,</span>
         ) : (
           <OdometerDigit key={i} digit={Number(c)} />
         )
       )}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0) 42%)",
+          pointerEvents: "none",
+        }}
+      />
     </div>
   );
 }
+
+// A machined brass dial. The conic fill carries the data (log-scale FFi); ticks,
+// needle, glass and bezel are pure instrument dressing.
+function BrassGauge({ fill, deg, color, center, unit }) {
+  return (
+    <div className="relative shrink-0" style={{ width: 184, height: 184 }}>
+      {/* brass bezel */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "50%",
+          background: "conic-gradient(from 208deg, #d8c489, #8a7038 22%, #efe0b0 42%, #7c6533 63%, #cbb374 82%, #8a7038)",
+          boxShadow: "0 7px 18px rgba(33,29,24,0.4), inset 0 2px 3px rgba(255,255,255,0.55), inset 0 -3px 7px rgba(0,0,0,0.4)",
+        }}
+      />
+      {/* dial face */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 13,
+          borderRadius: "50%",
+          background: "radial-gradient(circle at 50% 36%, #2b2720, #141009 82%)",
+          boxShadow: "inset 0 2px 9px rgba(0,0,0,0.75)",
+          overflow: "hidden",
+        }}
+      >
+        {/* minor graduations */}
+        {GAUGE_MINORS.map((d) => (
+          <div key={"m" + d} style={{ position: "absolute", inset: 0, transform: `rotate(${d}deg)` }}>
+            <div
+              style={{
+                position: "absolute",
+                top: 5,
+                left: "50%",
+                width: d % 40 === 0 ? 1.5 : 1,
+                height: d % 40 === 0 ? 9 : 5,
+                marginLeft: -0.75,
+                background: "rgba(228,214,178,0.4)",
+              }}
+            />
+          </div>
+        ))}
+        {/* labelled powers-of-ten */}
+        {GAUGE_MAJORS.map(({ exp, deg: md }) => (
+          <div key={"M" + exp} style={{ position: "absolute", inset: 0, transform: `rotate(${md}deg)` }}>
+            <div
+              style={{
+                position: "absolute",
+                top: 15,
+                left: "50%",
+                transform: `translateX(-50%) rotate(${-md}deg)`,
+                fontSize: 8.5,
+                lineHeight: 1,
+                letterSpacing: "0.02em",
+                color: "rgba(233,220,186,0.72)",
+              }}
+              className="of-display"
+            >
+              10<sup style={{ fontSize: 6 }}>{exp}</sup>
+            </div>
+          </div>
+        ))}
+        {/* data fill ring */}
+        <div
+          className="of-ring"
+          style={{
+            position: "absolute",
+            inset: 26,
+            borderRadius: "50%",
+            background: `conic-gradient(${color} ${deg}deg, rgba(255,255,255,0.055) ${deg}deg)`,
+            transition: "background 600ms ease",
+          }}
+        >
+          {/* raised centre cap */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 17,
+              borderRadius: "50%",
+              background: "radial-gradient(circle at 50% 34%, #29251e, #131009)",
+              boxShadow: "inset 0 1px 2px rgba(255,255,255,0.08), 0 2px 7px rgba(0,0,0,0.6)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span className="of-display" style={{ fontSize: 28, fontWeight: 700, lineHeight: 1, color }}>{center}</span>
+            <span className="of-display" style={{ fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8f8674", marginTop: 5 }}>{unit}</span>
+          </div>
+        </div>
+        {/* needle */}
+        <div className="of-needle" style={{ position: "absolute", inset: 0, transform: `rotate(${deg}deg)`, transition: "transform 700ms cubic-bezier(.22,.9,.24,1)" }}>
+          <div style={{ position: "absolute", top: 13, left: "50%", width: 2.5, height: 30, marginLeft: -1.25, borderRadius: 2, background: "linear-gradient(#f4e6b8, #c9a24a)", boxShadow: "0 0 5px rgba(0,0,0,0.55)" }} />
+        </div>
+        <div style={{ position: "absolute", top: "50%", left: "50%", width: 9, height: 9, marginLeft: -4.5, marginTop: -4.5, borderRadius: "50%", background: "radial-gradient(circle at 40% 35%, #f4e6b8, #8a7038)", boxShadow: "0 1px 2px rgba(0,0,0,0.6)" }} />
+        {/* glass reflection */}
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "linear-gradient(138deg, rgba(255,255,255,0.16), rgba(255,255,255,0) 46%)", pointerEvents: "none" }} />
+      </div>
+    </div>
+  );
+}
+
+// Engraved section rule used to divide the appraisal form into labelled parts.
+function SectionRule({ numeral, title, right }) {
+  return (
+    <div className="flex items-center gap-3" style={{ color: "#6B6656" }}>
+      <span className="of-display" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", color: "#C1622D" }}>{numeral}</span>
+      <span className="of-display" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.22em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{title}</span>
+      <span style={{ flex: 1, height: 0, borderTop: "1px solid #DDD5C4" }} />
+      {right && <span className="of-display" style={{ fontSize: 10, letterSpacing: "0.1em", color: "#A79F8C" }}>{right}</span>}
+    </div>
+  );
+}
+
+// A field label engraved above a control on the parameters form.
+function FieldLabel({ children }) {
+  return (
+    <span className="of-display" style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", color: "#6B6656" }}>{children}</span>
+  );
+}
+
+// A slider with a mono readout window and calibration graduations beneath it.
+function CalibratedSlider({ label, readout, value, min, max, onChange }) {
+  const span = max - min || 1;
+  const majorEvery = max - min > 8 ? 5 : 1;
+  const ticks = [];
+  for (let v = min; v <= max; v++) ticks.push({ v, major: (v - min) % majorEvery === 0 || v === max });
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <FieldLabel>{label}</FieldLabel>
+        <span className="of-display" style={{ fontSize: 11, fontWeight: 600, color: "#211D18", background: "#EFE7D6", border: "1px solid #D8D0BE", borderRadius: 4, padding: "1px 8px", whiteSpace: "nowrap", boxShadow: "inset 0 1px 1px rgba(255,255,255,0.6)" }}>{readout}</span>
+      </div>
+      <input type="range" min={min} max={max} value={value} onChange={onChange} />
+      <div className="relative" style={{ height: 9, marginTop: 5 }} aria-hidden="true">
+        {ticks.map((t) => (
+          <div key={t.v} style={{ position: "absolute", left: `${((t.v - min) / span) * 100}%`, top: 0, transform: "translateX(-50%)", width: 1, height: t.major ? 8 : 5, background: t.major ? "#9a9384" : "#cabfa9" }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const SELECT_STYLE = {
+  border: "1px solid #D8D0BE",
+  background: "#FBF9F4",
+  color: "#211D18",
+  boxShadow: "inset 0 1px 2px rgba(33,29,24,0.06)",
+  appearance: "none",
+  WebkitAppearance: "none",
+  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236B6656' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")",
+  backgroundRepeat: "no-repeat",
+  backgroundPosition: "right 12px center",
+};
 
 export default function App() {
   const [furniture, setFurniture] = useState("sofa");
@@ -258,6 +438,10 @@ export default function App() {
       : 0;
   const ringDeg = ringFill * 360;
 
+  // A deadpan specimen identifier for the letterhead — regenerates with the
+  // inputs, purely cosmetic (never fed back into the estimate).
+  const specimenNo = `PUE-${result.f.id.slice(0, 3).toUpperCase()}-${String(age).padStart(2, "0")}${owners}${adults}${children}${pets}`;
+
   // A straight-faced, paste-ready message to the seller. The evidence is
   // presented; the human picks the price — the brief never invents a number.
   const negotiationBrief = () => {
@@ -294,212 +478,347 @@ export default function App() {
     }
   };
 
+  const CARD = {
+    background: "#FBF9F3",
+    border: "1px solid #E4DDCC",
+    boxShadow: "0 1px 0 rgba(255,255,255,0.7) inset, 0 1px 2px rgba(33,29,24,0.05)",
+  };
+
   return (
-    <div className="of-body min-h-screen w-full flex items-start justify-center py-10 px-4" style={{ background: "#F3F0E8" }}>
-      <div className="w-full max-w-md">
-        <div className="mb-5">
-          <div className="of-display text-xl" style={{ color: "#211D18" }}>Prior Use Estimator</div>
-          <p className="text-sm mt-1" style={{ color: "#6B6656" }}>
-            Buying used furniture? Know what it has absorbed before you talk price. This estimates the total
-            number of flatus events a piece has taken on, calibrated against published flatus-frequency research
-            [1][2] and the compounds known to drive flatus odor [3] — evidence for the negotiation, not a lab
-            measurement of this specific item.
-          </p>
-        </div>
+    <div
+      className="of-body min-h-screen w-full flex items-start justify-center py-6 sm:py-10 px-3 sm:px-6"
+      style={{
+        color: "#211D18",
+        background:
+          "radial-gradient(120% 80% at 50% 0%, #33302a 0%, #262320 55%, #1d1b17 100%)",
+      }}
+    >
+      {/* The appraisal sheet */}
+      <div
+        className="w-full relative"
+        style={{
+          maxWidth: 880,
+          background:
+            "linear-gradient(#F5F1E8, #F1ECE0)",
+          border: "1px solid #C9C0AC",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.42), 0 2px 0 rgba(255,255,255,0.5) inset",
+        }}
+      >
+        {/* top double rule */}
+        <div style={{ height: 4, background: "#211D18" }} />
+        <div style={{ height: 1, background: "#211D18", marginTop: 3 }} />
 
-        <div className="rounded-2xl p-6 mb-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
-          <div className="flex items-center gap-5">
-            <div
-              className="of-ring relative flex items-center justify-center shrink-0"
-              style={{
-                width: 96,
-                height: 96,
-                borderRadius: "50%",
-                background: `conic-gradient(${result.tier.color} ${ringDeg}deg, #EDE9DF ${ringDeg}deg)`,
-                transition: "background 500ms ease",
-              }}
-            >
-              <div className="absolute rounded-full flex flex-col items-center justify-center" style={{ width: 76, height: 76, background: "#FFFFFF" }}>
-                <span className="of-display text-lg leading-none" style={{ color: result.tier.color }}>{Math.round(result.dailyEvents)}</span>
-                <span className="text-[10px] mt-0.5" style={{ color: "#9A9384" }}>per day</span>
+        <div className="px-5 sm:px-10 lg:px-12 py-7 sm:py-9">
+          {/* ---------- LETTERHEAD ---------- */}
+          <header className="flex items-start justify-between gap-4 pb-5" style={{ borderBottom: "1px solid #DDD5C4" }}>
+            <div className="flex items-start gap-4">
+              {/* embossed seal */}
+              <div className="shrink-0 relative" style={{ width: 58, height: 58 }} aria-hidden="true">
+                <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "2px double #C1622D", display: "flex", alignItems: "center", justifyContent: "center", background: "radial-gradient(circle at 50% 38%, #FBF9F3, #EDE6D6)", boxShadow: "inset 0 0 0 4px rgba(193,98,45,0.08)" }}>
+                  <span className="of-display" style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.02em", color: "#C1622D" }}>PUE</span>
+                </div>
+              </div>
+              <div>
+                <div className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.28em", textTransform: "uppercase", color: "#A0987F" }}>Certificate of Prior Use</div>
+                <h1 className="of-body" style={{ fontSize: 30, lineHeight: 1.03, fontWeight: 600, marginTop: 4, letterSpacing: "-0.01em" }}>Prior Use Estimator</h1>
+                <div className="of-display mt-1" style={{ fontSize: 10.5, letterSpacing: "0.05em", color: "#8A8371" }}>Bureau of Upholstery Provenance · Form&nbsp;FFi-01</div>
               </div>
             </div>
-            <div>
-              <div className="text-xs uppercase tracking-wide" style={{ color: "#9A9384" }}>Lifetime estimate</div>
-              <div className="mt-1.5 flex items-baseline gap-2">
-                <OdometerReadout value={result.ffi} />
-                <span className="of-display text-sm" style={{ color: "#9A9384" }}>FFi</span>
-              </div>
-              <span className="inline-block mt-2 px-2.5 py-1 rounded-md text-xs of-display" style={{ background: `${result.tier.color}1A`, color: result.tier.color }}>
-                {result.tier.label}
-              </span>
+            <div className="text-right hidden sm:block" style={{ minWidth: 132 }}>
+              <div className="of-display" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Specimen No.</div>
+              <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: "#211D18" }}>{specimenNo}</div>
+              <div className="of-display mt-3" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Classification</div>
+              <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: result.tier.color }}>{result.tier.label}</div>
             </div>
-          </div>
+          </header>
 
-          <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: "1px solid #EDE9DF" }}>
-            <span className="text-sm" style={{ color: "#6B6656" }}>Odor retention risk (material)</span>
-            <span className="of-display text-sm" style={{ color: result.retention.color }}>{result.retention.label}</span>
-          </div>
-          <p className="text-xs mt-3" style={{ color: "#B5AF9F" }}>
-            FFi — Flatulence Factor Index: the estimated cumulative number of flatus events this piece has absorbed
-            over its lifetime. Range: {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()}{" "}
-            (±{result.uncertaintyPct}%, widening with each undocumented previous owner).
+          {/* preamble */}
+          <p className="of-body mt-5" style={{ fontSize: 14.5, lineHeight: 1.65, color: "#4A453A", textWrap: "pretty" }}>
+            For the informed acquisition of pre-owned seating. This instrument estimates the cumulative number of
+            flatus events a piece has absorbed over its service life — calibrated against published flatus-frequency
+            research<span style={{ verticalAlign: "super", fontSize: 10 }}>[1][2]</span> and the compounds known to
+            drive flatus odor<span style={{ verticalAlign: "super", fontSize: 10 }}>[3]</span>. It is evidence assembled
+            for the negotiation, not a laboratory measurement of the specific item.
           </p>
-        </div>
 
-        <div className="rounded-2xl p-6 space-y-5" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Furniture type</label>
-              <select value={furniture} onChange={(e) => changeFurniture(e.target.value)} className="w-full mt-1.5 rounded-lg px-3 py-2 text-sm" style={{ border: "1px solid #E4DFD6", background: "#FBF9F4", color: "#211D18" }}>
-                {FURNITURE.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Upholstery</label>
-              <select value={material} onChange={(e) => setMaterial(e.target.value)} className="w-full mt-1.5 rounded-lg px-3 py-2 text-sm" style={{ border: "1px solid #E4DFD6", background: "#FBF9F4", color: "#211D18" }}>
-                {MATERIAL.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            </div>
+          {/* ---------- INSTRUMENT + PARAMETERS ---------- */}
+          <div className="mt-8 lg:grid lg:items-start" style={{ gridTemplateColumns: "356px 1fr", columnGap: 40 }}>
+            {/* READOUT INSTRUMENT PANEL */}
+            <section className="mb-8 lg:mb-0">
+              <SectionRule numeral="I" title="Instrument Readout" />
+              <div
+                className="mt-4"
+                style={{
+                  borderRadius: 14,
+                  padding: "22px 20px 18px",
+                  background: "linear-gradient(#242019, #17140f)",
+                  border: "1px solid #0e0c09",
+                  boxShadow: "0 2px 0 rgba(255,255,255,0.35), 0 14px 30px rgba(33,29,24,0.32), inset 0 1px 0 rgba(255,255,255,0.06)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <span className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "#8a8065" }}>Ring gauge · log₁₀</span>
+                  <span className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>events / day</span>
+                </div>
+
+                <div className="flex justify-center">
+                  <BrassGauge fill={ringFill} deg={ringDeg} color={result.tier.color} center={Math.round(result.dailyEvents)} unit="per day" />
+                </div>
+
+                {/* lifetime readout */}
+                <div className="mt-6 pt-5" style={{ borderTop: "1px solid #322c22" }}>
+                  <div className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.22em", textTransform: "uppercase", color: "#8a8065" }}>Lifetime estimate</div>
+                  <div className="mt-2 flex items-baseline gap-2 flex-wrap">
+                    <OdometerReadout value={result.ffi} />
+                    <span className="of-display" style={{ fontSize: 13, letterSpacing: "0.08em", color: "#b3a982" }}>FFi</span>
+                  </div>
+                </div>
+
+                {/* tier band + retention */}
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  <span className="of-display" style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", whiteSpace: "nowrap", padding: "4px 11px", borderRadius: 5, color: result.tier.color, border: `1px solid ${result.tier.color}`, background: `${result.tier.color}1F` }}>
+                    {result.tier.label}
+                  </span>
+                  <div className="text-right">
+                    <div className="of-display" style={{ fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>Odor retention</div>
+                    <div className="of-display" style={{ fontSize: 12, fontWeight: 600, color: result.retention.color }}>{result.retention.label}</div>
+                  </div>
+                </div>
+
+                {/* footnote — FFi definition kept inconspicuous */}
+                <p className="of-display mt-4" style={{ fontSize: 9.5, lineHeight: 1.6, color: "#7d7460" }}>
+                  FFi — Flatulence Factor Index: estimated cumulative flatus events absorbed over the piece's lifetime.
+                  Range {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()} (±{result.uncertaintyPct}%, widening
+                  with each undocumented previous owner).
+                </p>
+              </div>
+            </section>
+
+            {/* PARAMETERS FORM */}
+            <section>
+              <SectionRule numeral="II" title="Specimen Parameters" right="declared by buyer" />
+              <div className="mt-4" style={{ ...CARD, borderRadius: 12, padding: "22px 20px" }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                  <div>
+                    <div className="mb-2"><FieldLabel>Furniture type</FieldLabel></div>
+                    <select value={furniture} onChange={(e) => changeFurniture(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
+                      {FURNITURE.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="mb-2"><FieldLabel>Upholstery</FieldLabel></div>
+                    <select value={material} onChange={(e) => setMaterial(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
+                      {MATERIAL.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+                  <CalibratedSlider label="Age" readout={age === 0 ? "<1 yr" : `${age} ${age === 1 ? "yr" : "yrs"}`} value={age} min={0} max={25} onChange={(e) => setAge(Number(e.target.value))} />
+                  <CalibratedSlider label="Prev. owners" readout={String(owners)} value={owners} min={0} max={6} onChange={(e) => setOwners(Number(e.target.value))} />
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-6">
+                  <CalibratedSlider label="Adults" readout={String(adults)} value={adults} min={0} max={6} onChange={(e) => setAdults(Number(e.target.value))} />
+                  <CalibratedSlider label="Children" readout={String(children)} value={children} min={0} max={8} onChange={(e) => changeChildren(Number(e.target.value))} />
+                  <CalibratedSlider label="Dogs" readout={String(pets)} value={pets} min={0} max={5} onChange={(e) => setPets(Number(e.target.value))} />
+                </div>
+
+                {/* usage checklist */}
+                <div className="mt-7">
+                  <div className="mb-3"><FieldLabel>Primary use — select all applicable</FieldLabel></div>
+                  <div className="flex flex-wrap gap-2">
+                    {USAGE_TYPES.map((u) => {
+                      const disabled = usageDisabled(u.id);
+                      const active = !disabled && usage.includes(u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          onClick={() => toggleUsage(u.id)}
+                          disabled={disabled}
+                          title={disabled
+                            ? u.id === "family"
+                              ? "Set Children above 0 first"
+                              : `Not applicable to ${result.f.label.toLowerCase()}`
+                            : undefined}
+                          className="of-display inline-flex items-center gap-2 text-xs rounded-md"
+                          style={{
+                            padding: "6px 11px",
+                            letterSpacing: "0.01em",
+                            border: `1px solid ${disabled ? "#D3CBBA" : active ? "#211D18" : "#D3CBB9"}`,
+                            background: disabled
+                              ? "repeating-linear-gradient(135deg, #EBE6DA, #EBE6DA 5px, #E1DBCC 5px, #E1DBCC 10px)"
+                              : active ? "#211D18" : "#FBF9F3",
+                            color: disabled ? "#8A8272" : active ? "#F4EFE4" : "#4A453A",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            boxShadow: active ? "0 1px 2px rgba(33,29,24,0.25)" : "none",
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="inline-flex items-center justify-center"
+                            style={{
+                              width: 13, height: 13, borderRadius: 3, fontSize: 10, lineHeight: 1,
+                              border: `1px solid ${disabled ? "#C9C1B0" : active ? "#F4EFE4" : "#B7AF9C"}`,
+                              background: active ? "#C1622D" : "transparent",
+                              color: "#F4EFE4",
+                            }}
+                          >
+                            {active ? "✓" : disabled ? "–" : ""}
+                          </span>
+                          {u.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* actuator */}
+                <button
+                  onClick={() => setRevealed(true)}
+                  className="of-display w-full mt-7 rounded-lg text-white inline-flex items-center justify-center gap-3"
+                  style={{
+                    padding: "13px 16px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase",
+                    background: "linear-gradient(#2c2720, #1b1712)",
+                    border: "1px solid #0f0d0a",
+                    boxShadow: "0 2px 0 rgba(255,255,255,0.35), 0 3px 8px rgba(33,29,24,0.28), inset 0 1px 0 rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <span
+                    className={revealed ? "of-led-on" : undefined}
+                    style={{ width: 8, height: 8, borderRadius: "50%", background: revealed ? "#7FBE86" : "#5a5344", boxShadow: revealed ? "0 0 7px rgba(127,190,134,0.9)" : "inset 0 1px 1px rgba(0,0,0,0.5)" }}
+                  />
+                  Calculate estimate
+                </button>
+              </div>
+            </section>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Age: {age === 0 ? "<1 yr" : `${age} ${age === 1 ? "yr" : "yrs"}`}</label>
-              <input type="range" min="0" max="25" value={age} onChange={(e) => setAge(Number(e.target.value))} className="w-full mt-3" />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Previous owners: {owners}</label>
-              <input type="range" min="0" max="6" value={owners} onChange={(e) => setOwners(Number(e.target.value))} className="w-full mt-3" />
-            </div>
-          </div>
+          {/* ---------- ISSUED BRIEF ---------- */}
+          {revealed && (
+            <section className="of-fade mt-9">
+              <SectionRule numeral="III" title="Negotiation Brief" right="for issue to seller" />
+              <div className="mt-4 relative overflow-hidden" style={{ ...CARD, borderRadius: 12, padding: "24px 22px" }}>
+                {/* watermark corner */}
+                <div aria-hidden="true" className="of-display" style={{ position: "absolute", top: 14, right: 18, fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C4BCA9" }}>{specimenNo}</div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Adults: {adults}</label>
-              <input type="range" min="0" max="6" value={adults} onChange={(e) => setAdults(Number(e.target.value))} className="w-full mt-3" />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Children: {children}</label>
-              <input type="range" min="0" max="8" value={children} onChange={(e) => changeChildren(Number(e.target.value))} className="w-full mt-3" />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Dogs: {pets}</label>
-              <input type="range" min="0" max="5" value={pets} onChange={(e) => setPets(Number(e.target.value))} className="w-full mt-3" />
-            </div>
-          </div>
+                <div className="of-display" style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "#A0987F" }}>Summary of Findings</div>
+                <p className="of-body mt-3" style={{ fontSize: 15, lineHeight: 1.68, color: "#3B372E", textWrap: "pretty" }}>
+                  A {age === 0 ? "nearly new" : `${age}-year-old`} {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
+                  of {adults} adult{adults === 1 ? "" : "s"}
+                  {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
+                  {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"} (on their own schedule)` : ""}, with{" "}
+                  {owners} previous owner{owners === 1 ? "" : "s"}
+                  {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
+                  <strong style={{ fontWeight: 700 }}>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
+                  <strong style={{ fontWeight: 700 }}>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.
+                </p>
+                <p className="of-body mt-4" style={{ fontSize: 14, lineHeight: 1.6, fontStyle: "italic", color: result.tier.color, paddingLeft: 14, borderLeft: `2px solid ${result.tier.color}` }}>{result.tier.note}</p>
 
-          <div>
-            <label className="text-xs" style={{ color: "#6B6656" }}>Primary use (select all that apply)</label>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {USAGE_TYPES.map((u) => {
-                const disabled = usageDisabled(u.id);
-                const active = !disabled && usage.includes(u.id);
-                return (
+                <div className="relative mt-6">
                   <button
-                    key={u.id}
-                    onClick={() => toggleUsage(u.id)}
-                    disabled={disabled}
-                    title={disabled
-                      ? u.id === "family"
-                        ? "Set Children above 0 first"
-                        : `Not applicable to ${result.f.label.toLowerCase()}`
-                      : undefined}
-                    className="text-xs px-3 py-1.5 rounded-full transition-colors"
+                    onClick={copyBrief}
+                    className="of-display w-full rounded-lg transition-colors inline-flex items-center justify-center gap-2.5"
                     style={{
-                      border: `1px solid ${active ? "#C1622D" : "#E4DFD6"}`,
-                      background: disabled ? "#F6F4EE" : active ? "#C1622D" : "#FBF9F4",
-                      color: disabled ? "#C4BEAF" : active ? "#FFFFFF" : "#4A453A",
-                      cursor: disabled ? "not-allowed" : "pointer",
+                      padding: "13px 16px",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: "0.16em",
+                      textTransform: "uppercase",
+                      border: `1px solid ${copied ? "#211D18" : "#C1622D"}`,
+                      background: copied ? "#211D18" : "#C1622D",
+                      color: "#F6F1E6",
+                      boxShadow: "0 2px 0 rgba(255,255,255,0.4), 0 3px 8px rgba(33,29,24,0.22)",
                     }}
                   >
-                    {u.label}
+                    {copied ? "Copied — go get your discount" : "Copy negotiation brief"}
                   </button>
-                );
-              })}
+                  {/* issued rubber stamp */}
+                  {copied && (
+                    <div
+                      aria-hidden="true"
+                      className="of-stamp"
+                      style={{
+                        position: "absolute", top: "50%", left: "50%", marginTop: -30, marginLeft: -66,
+                        width: 132, textAlign: "center", pointerEvents: "none",
+                        border: "2.5px solid rgba(180,64,42,0.78)", borderRadius: 8,
+                        padding: "5px 6px", color: "rgba(180,64,42,0.82)",
+                      }}
+                    >
+                      <div className="of-display" style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.18em" }}>ISSUED</div>
+                      <div className="of-display" style={{ fontSize: 7, letterSpacing: "0.14em", marginTop: 1 }}>COPY RELEASED TO CLIPBOARD</div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="of-display mt-5" style={{ fontSize: 9.5, lineHeight: 1.6, color: "#9A9384" }}>
+                  A rough, input-based estimate meant to guide inspection and inform your offer — not a verified
+                  measurement of the item.
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* ---------- JOURNAL REPRINT: METHODOLOGY + REFERENCES ---------- */}
+          <section className="mt-10 pt-7" style={{ borderTop: "2px solid #211D18" }}>
+            <div className="flex items-baseline justify-between flex-wrap gap-2">
+              <span className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "#8A8371" }}>Technical Supplement · reprint</span>
+              <span className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.12em", color: "#A79F8C" }}>Biosensors &amp; Bioelectronics: X, 27</span>
             </div>
-          </div>
 
-          <button onClick={() => setRevealed(true)} className="of-display w-full py-3 rounded-xl text-sm text-white mt-1" style={{ background: "#211D18" }}>
-            Calculate estimate
-          </button>
-        </div>
-
-        {revealed && (
-          <div className="of-fade rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
-            <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Summary</div>
-            <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
-              A {age === 0 ? "nearly new" : `${age}-year-old`} {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
-              of {adults} adult{adults === 1 ? "" : "s"}
-              {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
-              {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"} (on their own schedule)` : ""}, with{" "}
-              {owners} previous owner{owners === 1 ? "" : "s"}
-              {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
-              <strong>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
-              <strong>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.
+            <h2 className="of-body mt-4" style={{ fontSize: 19, fontWeight: 600 }}>Methodology</h2>
+            <p className="of-body mt-2" style={{ fontSize: 13.5, lineHeight: 1.72, color: "#3B372E", textAlign: "justify", hyphens: "auto", WebkitHyphens: "auto" }}>
+              The FFi is a direct event count, not a score. Adults emit a baseline of {FLATUS_EVENTS_PER_DAY} flatus
+              events per day [1], spread across the full 24-hour day (≈1.3/hr) so that sleeping on the piece is
+              counted at the same rate as sitting on it; earlier clinical estimates put the daily baseline closer
+              to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but suppress roughly half as
+              much. Dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social suppression whatsoever
+              (a stated model assumption — no wearable-sensor canine study exists yet), and unlike humans they use
+              the furniture on their own schedule: {DOG_HOURS_ON_FURNITURE} hours a day, scaled by how inviting the
+              piece is to lie on (an office chair holds little appeal). Each selected activity contributes its
+              typical daily hours, discounted by an adult social-suppression factor (video calls suppress roughly
+              60% of urges, guests ~90%); total household occupancy is capped at {MAX_OCCUPIED_HOURS_PER_DAY} hours
+              a day. Seat count caps concurrent occupancy — a sectional absorbs the whole household at once, while
+              an office chair hosts exactly one emitter — and the daily total is compounded over the item's age
+              (a piece under a year old is counted as six months). Previous owners don't change the count, only the
+              confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity
+              itself tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery
+              retention is reported as its own rating and never alters the count or its tier.
             </p>
-            <p className="text-sm mt-3" style={{ color: result.tier.color }}>{result.tier.note}</p>
-            <button
-              onClick={copyBrief}
-              className="of-display w-full py-2.5 rounded-xl text-sm mt-4 transition-colors"
-              style={{
-                border: "1px solid #211D18",
-                background: copied ? "#211D18" : "transparent",
-                color: copied ? "#FFFFFF" : "#211D18",
-              }}
-            >
-              {copied ? "Copied — go get your discount" : "Copy negotiation brief"}
-            </button>
-            <p className="text-xs mt-4" style={{ color: "#9A9384" }}>
-              This is a rough, input-based estimate meant to guide inspection and inform your offer — not a verified
-              measurement of the item.
-            </p>
-          </div>
-        )}
 
-        <div className="rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Methodology</div>
-          <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
-            The FFi is a direct event count, not a score. Adults emit a baseline of {FLATUS_EVENTS_PER_DAY} flatus
-            events per day [1], spread across the full 24-hour day (≈1.3/hr) so that sleeping on the piece is
-            counted at the same rate as sitting on it; earlier clinical estimates put the daily baseline closer
-            to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but suppress roughly half as
-            much. Dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social suppression whatsoever
-            (a stated model assumption — no wearable-sensor canine study exists yet), and unlike humans they use
-            the furniture on their own schedule: {DOG_HOURS_ON_FURNITURE} hours a day, scaled by how inviting the
-            piece is to lie on (an office chair holds little appeal). Each selected activity contributes its
-            typical daily hours, discounted by an adult social-suppression factor (video calls suppress roughly
-            60% of urges, guests ~90%); total household occupancy is capped at {MAX_OCCUPIED_HOURS_PER_DAY} hours
-            a day. Seat count caps concurrent occupancy — a sectional absorbs the whole household at once, while
-            an office chair hosts exactly one emitter — and the daily total is compounded over the item's age
-            (a piece under a year old is counted as six months). Previous owners don't change the count, only the
-            confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity
-            itself tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery
-            retention is reported as its own rating and never alters the count or its tier.
-          </p>
-        </div>
+            <h2 className="of-body mt-7" style={{ fontSize: 19, fontWeight: 600 }}>References</h2>
+            <ol className="of-body mt-2" style={{ fontSize: 12.5, lineHeight: 1.6, color: "#4A453A", listStyle: "none", padding: 0 }}>
+              <li style={{ paddingLeft: 26, textIndent: -26, marginTop: 8 }}>
+                [1] Botasini, S., Zhan, D., Fischer, N., Ravel, C. T., Tien, A., Grant, M. R., Ndjite, G. M., Sopko,
+                T., Childs, H., Greenfield, M., Qian, C. X., Gardiner, K. E., Anders, N. M., Ullah, T. F., Redmond,
+                L. T., Callaway, D. A., Behailu, E. M., Sarkar, G. M., Sany, N. C., ... Hall, B. (2025). Smart
+                underwear: A novel wearable for long-term monitoring of gut microbial gas production via flatus.{" "}
+                <em>Biosensors and Bioelectronics: X, 27</em>, Article 100699.{" "}
+                <span className="of-display" style={{ fontSize: 11, color: "#6B6656" }}>https://doi.org/10.1016/j.biosx.2025.100699</span>
+              </li>
+              <li style={{ paddingLeft: 26, textIndent: -26, marginTop: 8 }}>
+                [2] Tomlin, J., Lowis, C., &amp; Read, N. W. (1991). Investigation of normal flatus production in
+                healthy volunteers. <em>Gut, 32</em>(6), 665–669.{" "}
+                <span className="of-display" style={{ fontSize: 11, color: "#6B6656" }}>https://doi.org/10.1136/gut.32.6.665</span>
+              </li>
+              <li style={{ paddingLeft: 26, textIndent: -26, marginTop: 8 }}>
+                [3] Suarez, F. L., Springfield, J., &amp; Levitt, M. D. (1998). Identification of gases responsible
+                for the odour of human flatus and evaluation of a device purported to reduce this odour.{" "}
+                <em>Gut, 43</em>(1), 100–104.{" "}
+                <span className="of-display" style={{ fontSize: 11, color: "#6B6656" }}>https://doi.org/10.1136/gut.43.1.100</span>
+              </li>
+            </ol>
+          </section>
 
-        <div className="rounded-2xl p-6 mt-4 mb-2" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>References</div>
-          <ol className="text-xs leading-relaxed space-y-2" style={{ color: "#6B6656" }}>
-            <li>
-              [1] Botasini, S., Zhan, D., Fischer, N., Ravel, C. T., Tien, A., Grant, M. R., Ndjite, G. M., Sopko,
-              T., Childs, H., Greenfield, M., Qian, C. X., Gardiner, K. E., Anders, N. M., Ullah, T. F., Redmond,
-              L. T., Callaway, D. A., Behailu, E. M., Sarkar, G. M., Sany, N. C., ... Hall, B. (2025). Smart
-              underwear: A novel wearable for long-term monitoring of gut microbial gas production via flatus.{" "}
-              <em>Biosensors and Bioelectronics: X, 27</em>, Article 100699.{" "}
-              https://doi.org/10.1016/j.biosx.2025.100699
-            </li>
-            <li>
-              [2] Tomlin, J., Lowis, C., &amp; Read, N. W. (1991). Investigation of normal flatus production in
-              healthy volunteers. <em>Gut, 32</em>(6), 665–669. https://doi.org/10.1136/gut.32.6.665
-            </li>
-            <li>
-              [3] Suarez, F. L., Springfield, J., &amp; Levitt, M. D. (1998). Identification of gases responsible
-              for the odour of human flatus and evaluation of a device purported to reduce this odour.{" "}
-              <em>Gut, 43</em>(1), 100–104. https://doi.org/10.1136/gut.43.1.100
-            </li>
-          </ol>
+          {/* page footer */}
+          <footer className="mt-9 pt-4 flex items-center justify-between flex-wrap gap-2" style={{ borderTop: "1px solid #DDD5C4" }}>
+            <span className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C" }}>Prior Use Estimator · methodology per Botasini et al. 2025</span>
+            <span className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C" }}>{specimenNo} · sheet 1 of 1</span>
+          </footer>
         </div>
       </div>
     </div>

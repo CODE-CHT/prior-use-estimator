@@ -1,29 +1,93 @@
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-.of-display { font-family: 'Sora', sans-serif; }
-.of-body { font-family: 'Inter', sans-serif; }
+/* Instrument / technical face — engraved labels, gauge type, serials, readouts */
+.of-display { font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace; }
+/* Document face — appraisal body copy, methodology, references, headings */
+.of-body { font-family: 'Newsreader', Georgia, 'Times New Roman', serif; }
 
+/* ---- Calibrated sliders: engraved channel + machined brass thumb ---- */
 input[type="range"] {
   -webkit-appearance: none;
-  height: 4px;
+  appearance: none;
+  width: 100%;
+  height: 6px;
   border-radius: 2px;
-  background: #E4DFD6;
+  background: linear-gradient(#c6bda9, #ded6c4);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32), 0 1px 0 rgba(255, 255, 255, 0.55);
+  cursor: pointer;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  margin-top: -8px;
   border-radius: 50%;
-  background: #C1622D;
+  border: 1px solid #5f4e28;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 45%),
+    repeating-conic-gradient(rgba(0, 0, 0, 0) 0 7deg, rgba(0, 0, 0, 0.18) 7deg 14deg),
+    linear-gradient(150deg, #ecd9a2, #ac8b4d 52%, #7c6533);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.65);
   cursor: pointer;
-  border: 2px solid #FAF8F4;
-  box-shadow: 0 0 0 1px #C1622D;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.92);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 2px;
+  background: linear-gradient(#c6bda9, #ded6c4);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #5f4e28;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 45%),
+    repeating-conic-gradient(rgba(0, 0, 0, 0) 0 7deg, rgba(0, 0, 0, 0.18) 7deg 14deg),
+    linear-gradient(150deg, #ecd9a2, #ac8b4d 52%, #7c6533);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+}
+input[type="range"]:focus-visible {
+  outline: none;
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(193, 98, 45, 0.35), 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
+/* ---- Motion ---- */
+@keyframes of-fade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.of-fade { animation: of-fade 480ms cubic-bezier(.22, .9, .24, 1) both; }
+
+@keyframes of-stamp {
+  0%   { opacity: 0; transform: rotate(-11deg) scale(1.9); }
+  55%  { opacity: 1; transform: rotate(-11deg) scale(0.9); }
+  75%  { transform: rotate(-11deg) scale(1.06); }
+  100% { opacity: 1; transform: rotate(-11deg) scale(1); }
+}
+.of-stamp { animation: of-stamp 300ms cubic-bezier(.3, 1.4, .5, 1) both; }
+
+@keyframes of-led {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.of-led-on { animation: of-led 1.8s ease-in-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
-  .of-ring, .of-fade { transition: none !important; }
+  .of-ring, .of-fade, .of-needle, .of-roll, .of-stamp, .of-led-on {
+    transition: none !important;
+    animation: none !important;
+  }
 }
