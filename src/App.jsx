@@ -14,7 +14,7 @@ const FURNITURE = [
   { id: "ottoman", label: "Ottoman", seats: 0.5, dogAppeal: 0.6, uses: ["tv", "eating", "family", "guest"] },
   // On a mattress, "napping / sleeping" is a full night, not a 1.5-hour nap —
   // hourOverrides replaces a usage type's default daily hours for this piece.
-  { id: "mattress", label: "Mattress", seats: 2, dogAppeal: 1, uses: ["napping", "tv", "wfh", "gaming", "eating", "family"], hourOverrides: { napping: 8 } },
+  { id: "mattress", label: "Mattress", seats: 2, dogAppeal: 1, uses: ["napping", "everyday", "tv", "wfh", "gaming", "eating", "family"], hourOverrides: { napping: 8 } },
 ];
 
 const MATERIAL = [
@@ -57,6 +57,7 @@ const DAYS_PER_YEAR = 365.25;
 // despite heavier suppression during calls, WFH still contributes heavily —
 // longer seat time outweighs the suppression.
 const USAGE_TYPES = [
+  { id: "everyday", label: "Everyday use / lounging", hours: 4, suppression: 0.15 },
   { id: "tv", label: "TV / movie marathons", hours: 3, suppression: 0.1 },
   { id: "napping", label: "Napping / sleeping", hours: 1.5, suppression: 0 },
   { id: "gaming", label: "Gaming sessions", hours: 2.5, suppression: 0.1 },
@@ -505,6 +506,14 @@ export default function App() {
       : 0;
   const ringDeg = ringFill * 360;
 
+  // Confidence is the flip side of the uncertainty range: more undocumented
+  // previous owners widen the range and drop the confidence rating.
+  const confidence =
+    result.uncertaintyPct <= 10 ? { label: "High", color: "#6E8F72" }
+    : result.uncertaintyPct <= 22 ? { label: "Moderate", color: "#D99A2B" }
+    : result.uncertaintyPct <= 36 ? { label: "Low", color: "#C1622D" }
+    : { label: "Very low", color: "#B4402A" };
+
   // A straight-faced, paste-ready message to the seller. The evidence is
   // presented; the human picks the price — the brief never invents a number.
   const negotiationBrief = () => {
@@ -652,6 +661,7 @@ export default function App() {
                   <div className="mt-2 flex items-baseline gap-2 flex-wrap">
                     <OdometerReadout value={result.ffi} />
                     <span className="of-display" style={{ fontSize: 13, letterSpacing: "0.08em", color: "#b3a982" }}>FFi</span>
+                    <span className="of-display" style={{ fontSize: 12, letterSpacing: "0.04em", color: "#8a8065" }}>± {result.uncertaintyPct}%</span>
                   </div>
                 </div>
 
@@ -660,9 +670,15 @@ export default function App() {
                   <span className="of-display" style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", whiteSpace: "nowrap", padding: "4px 11px", borderRadius: 5, color: result.tier.color, border: `1px solid ${result.tier.color}`, background: `${result.tier.color}1F` }}>
                     {result.tier.label}
                   </span>
-                  <div className="text-right">
-                    <div className="of-display" style={{ fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>Odor retention</div>
-                    <div className="of-display" style={{ fontSize: 12, fontWeight: 600, color: result.retention.color }}>{result.retention.label}</div>
+                  <div className="flex gap-5 text-right">
+                    <div>
+                      <div className="of-display" style={{ fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>Confidence</div>
+                      <div className="of-display" style={{ fontSize: 12, fontWeight: 600, color: confidence.color }}>{confidence.label}</div>
+                    </div>
+                    <div>
+                      <div className="of-display" style={{ fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>Odor retention</div>
+                      <div className="of-display" style={{ fontSize: 12, fontWeight: 600, color: result.retention.color }}>{result.retention.label}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -890,8 +906,11 @@ export default function App() {
               events per day [1], spread across the full 24-hour day (≈1.3/hr); earlier clinical estimates put the
               daily baseline closer to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Odor intensity itself tracks hydrogen
               sulfide concentration rather than gas volume [3], which is why upholstery retention is reported as its
-              own rating and never alters the count or its tier. Previous owners don't change the count, only the
-              confidence in it: each undocumented history widens the uncertainty range by ±7%.
+              own rating and never alters the count or its tier. Previous owners don't change the count, only our
+              confidence in it: each prior owner is an undocumented household whose particular use is unknown, so
+              rather than inflate the estimate — the mileage or age already captures the actual exposure — an
+              additional owner widens the stated uncertainty range by ±7% and lowers the confidence rating shown
+              on the readout.
             </p>
             {!isCar && (
               <p className="of-body mt-3" style={{ fontSize: 13.5, lineHeight: 1.72, color: "#3B372E", textAlign: "justify", hyphens: "auto", WebkitHyphens: "auto" }}>
