@@ -76,11 +76,29 @@ function retentionFor(factor) {
 // Tier thresholds are lifetime event counts, from the count alone — odor
 // retention is a separate axis and no longer bumps the tier. A typical 5-year
 // two-adult sofa lands around 20,000 events, anchoring "Some History".
+// `note` advises the buyer; `ask` is the corresponding line in the
+// copy-pasteable negotiation brief sent to the seller.
 const TIERS = [
-  { key: "fresh", label: "Low Concern", max: 10000, color: "#6E8F72", note: "Nothing here that should factor into your decision." },
-  { key: "ripe", label: "Some History", max: 50000, color: "#D99A2B", note: "Typical accumulation for a used piece. A wipe-down and airing out should be plenty." },
-  { key: "elevated", label: "Elevated", max: 150000, color: "#C1622D", note: "Heavier accumulation than average. Worth inspecting cushions and inner padding before buying." },
-  { key: "high", label: "High", max: Infinity, color: "#B4402A", note: "Significant estimated accumulation. Consider a deep clean or reupholstering, or negotiate the price." },
+  {
+    key: "fresh", label: "Low Concern", max: 10000, color: "#6E8F72",
+    note: "Nothing here to bargain with. If the piece checks out otherwise, the asking price is fair.",
+    ask: "I'm comfortable proceeding at your asking price — I'm sharing these figures purely in the interest of transparency.",
+  },
+  {
+    key: "ripe", label: "Some History", max: 50000, color: "#D99A2B",
+    note: "Typical accumulation for a used piece — which is exactly why used prices run below retail. A modest discount request is reasonable.",
+    ask: "Given the piece's documented history, I'd propose a modest adjustment to the asking price.",
+  },
+  {
+    key: "elevated", label: "Elevated", max: 150000, color: "#C1622D",
+    note: "Heavier accumulation than average. Inspect the cushions and inner padding in front of the seller, then make an offer that reflects what you find.",
+    ask: "In light of the elevated figures, I'd want to inspect the cushions in person and discuss a price that reflects the findings.",
+  },
+  {
+    key: "high", label: "High", max: Infinity, color: "#B4402A",
+    note: "Significant estimated accumulation. Budget for a deep clean or reupholstering in your offer — or be prepared to walk.",
+    ask: "The estimated accumulation here is significant, and any offer I make would need to account for deep cleaning or reupholstery.",
+  },
 ];
 
 // Ring gauge maps the FFi onto a log scale: 10² events ≈ empty, 10^6.5 ≈ full.
@@ -158,6 +176,7 @@ export default function App() {
   const [pets, setPets] = useState(0);
   const [usage, setUsage] = useState(["tv", "napping"]);
   const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const usageDisabled = (id) =>
     !allowedForFurniture(furniture, id) || (id === "family" && children === 0);
@@ -232,15 +251,52 @@ export default function App() {
       : 0;
   const ringDeg = ringFill * 360;
 
+  // A straight-faced, paste-ready message to the seller. The evidence is
+  // presented; the human picks the price — the brief never invents a number.
+  const negotiationBrief = () => {
+    // "Sofa (3-seat)" reads fine in a dropdown, oddly in a message to a human.
+    const pieceName = result.f.label.replace(/\s*\(.*\)$/, "").toLowerCase();
+    const household = [
+      `${adults} adult${adults === 1 ? "" : "s"}`,
+      children > 0 ? `${children} ${children === 1 ? "child" : "children"}` : null,
+      pets > 0 ? `${pets} dog${pets === 1 ? "" : "s"}` : null,
+    ].filter(Boolean).join(", ");
+    const uses = usage
+      .map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase())
+      .filter(Boolean)
+      .join(", ");
+    return [
+      `Hi — I'm interested in the ${pieceName}. Before we settle on a price, I ran the details through the Prior Use Estimator (methodology per Botasini et al., 2025, Biosensors and Bioelectronics: X).`,
+      ``,
+      `Based on what you've shared — a ${age === 0 ? "nearly new" : `${age}-year-old`} ${pieceName} in ${result.m.label.toLowerCase()}, serving a household of ${household}${uses ? `, used mainly for ${uses}` : ""} — the piece carries an estimated ${result.ffi.toLocaleString()} FFi (Flatulence Factor Index: cumulative absorbed flatus events), plausible range ${result.ffiLow.toLocaleString()}–${result.ffiHigh.toLocaleString()}, with ${result.retention.label.toLowerCase()} odor retention from the upholstery. That places it in the "${result.tier.label}" band.`,
+      ``,
+      result.tier.ask,
+      ``,
+      `Full methodology and references available on request.`,
+    ].join("\n");
+  };
+
+  const copyBrief = async () => {
+    try {
+      await navigator.clipboard.writeText(negotiationBrief());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable (permissions/insecure context) — leave the
+      // button label unchanged so it doesn't claim a copy that didn't happen.
+    }
+  };
+
   return (
     <div className="of-body min-h-screen w-full flex items-start justify-center py-10 px-4" style={{ background: "#F3F0E8" }}>
       <div className="w-full max-w-md">
         <div className="mb-5">
           <div className="of-display text-xl" style={{ color: "#211D18" }}>Prior Use Estimator</div>
           <p className="text-sm mt-1" style={{ color: "#6B6656" }}>
-            Answer a few questions about the piece you're considering. This estimates the total number of flatus
-            events the item has absorbed, calibrated against published flatus-frequency research [1][2] and the
-            compounds known to drive flatus odor [3] — not a lab measurement of this specific item.
+            Buying used furniture? Know what it has absorbed before you talk price. This estimates the total
+            number of flatus events a piece has taken on, calibrated against published flatus-frequency research
+            [1][2] and the compounds known to drive flatus odor [3] — evidence for the negotiation, not a lab
+            measurement of this specific item.
           </p>
         </div>
 
@@ -376,8 +432,20 @@ export default function App() {
               <strong>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.
             </p>
             <p className="text-sm mt-3" style={{ color: result.tier.color }}>{result.tier.note}</p>
+            <button
+              onClick={copyBrief}
+              className="of-display w-full py-2.5 rounded-xl text-sm mt-4 transition-colors"
+              style={{
+                border: "1px solid #211D18",
+                background: copied ? "#211D18" : "transparent",
+                color: copied ? "#FFFFFF" : "#211D18",
+              }}
+            >
+              {copied ? "Copied — go get your discount" : "Copy negotiation brief"}
+            </button>
             <p className="text-xs mt-4" style={{ color: "#9A9384" }}>
-              This is a rough, input-based estimate meant to guide inspection — not a verified measurement of the item.
+              This is a rough, input-based estimate meant to guide inspection and inform your offer — not a verified
+              measurement of the item.
             </p>
           </div>
         )}
