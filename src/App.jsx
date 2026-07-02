@@ -422,7 +422,14 @@ export default function App() {
 
   const toggleUsage = (id) => {
     if (usageDisabled(id)) return;
-    setUsage((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]));
+    setUsage((u) => {
+      if (u.includes(id)) return u.filter((x) => x !== id);
+      // "Everyday use" is a catch-all baseline, mutually exclusive with the
+      // specific activities: selecting it clears them, and picking any
+      // specific drops it — so you can't double-count generic + specific use.
+      if (id === "everyday") return ["everyday"];
+      return [...u.filter((x) => x !== "everyday"), id];
+    });
   };
 
   const changeFurniture = (id) => {
@@ -453,7 +460,7 @@ export default function App() {
       const ffi = Math.round(hoursSeated * HUMAN_RATE_PER_HOUR * (1 - DRIVING_SUPPRESSION));
       const idx = CAR_TIERS.findIndex((t) => ffi <= t.max);
       const tier = CAR_TIERS[idx === -1 ? CAR_TIERS.length - 1 : idx];
-      return { ...withRange(ffi), uncertaintyPct, hoursSeated, tier, retention, m };
+      return { ...withRange(ffi), uncertaintyPct, hoursSeated, tier, retention, m, empty: mileage === 0 };
     }
 
     // --- Furniture ---
@@ -497,7 +504,11 @@ export default function App() {
     const idx = TIERS.findIndex((t) => ffi <= t.max);
     const tier = TIERS[idx === -1 ? TIERS.length - 1 : idx];
 
-    return { ...withRange(ffi), uncertaintyPct, dailyEvents, tier, retention, f, m };
+    // No occupants or no declared use means there's nothing to estimate — a
+    // used piece read as pristine would be misleading, so flag it.
+    const empty = adults + children + pets === 0 || activeUsage.length === 0;
+
+    return { ...withRange(ffi), uncertaintyPct, dailyEvents, tier, retention, f, m, empty };
   }, [category, mileage, furniture, material, age, owners, adults, children, pets, usage]);
 
   const ringFill =
@@ -609,7 +620,7 @@ export default function App() {
             </div>
             <div className="text-right hidden sm:block" style={{ minWidth: 132 }}>
               <div className="of-display" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Classification</div>
-              <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: result.tier.color }}>{result.tier.label}</div>
+              <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: result.empty ? "#A0987F" : result.tier.color }}>{result.empty ? "—" : result.tier.label}</div>
             </div>
           </header>
 
@@ -667,8 +678,8 @@ export default function App() {
 
                 {/* tier band + retention */}
                 <div className="mt-5 flex items-center justify-between gap-3">
-                  <span className="of-display" style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", whiteSpace: "nowrap", padding: "4px 11px", borderRadius: 5, color: result.tier.color, border: `1px solid ${result.tier.color}`, background: `${result.tier.color}1F` }}>
-                    {result.tier.label}
+                  <span className="of-display" style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", whiteSpace: "nowrap", padding: "4px 11px", borderRadius: 5, color: result.empty ? "#8a8065" : result.tier.color, border: `1px solid ${result.empty ? "#4a4536" : result.tier.color}`, background: result.empty ? "transparent" : `${result.tier.color}1F` }}>
+                    {result.empty ? "Awaiting inputs" : result.tier.label}
                   </span>
                   <div className="flex gap-5 text-right">
                     <div>
@@ -684,9 +695,13 @@ export default function App() {
 
                 {/* footnote — FFi definition kept inconspicuous */}
                 <p className="of-display mt-4" style={{ fontSize: 9.5, lineHeight: 1.6, color: "#7d7460" }}>
-                  FFi — Flatulence Factor Index: estimated cumulative flatus events absorbed over the {isCar ? "driver's seat's" : "piece's"} lifetime.
-                  Range {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()} (±{result.uncertaintyPct}%, widening
-                  with each undocumented previous owner).
+                  {result.empty ? (
+                    `Set at least one ${isCar ? "mile on the odometer" : "occupant and primary use"} to generate an estimate.`
+                  ) : (
+                    <>FFi — Flatulence Factor Index: estimated cumulative flatus events absorbed over the {isCar ? "driver's seat's" : "piece's"} lifetime.
+                    Range {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()} (±{result.uncertaintyPct}%, widening
+                    with each undocumented previous owner).</>
+                  )}
                 </p>
               </div>
             </section>
@@ -807,6 +822,8 @@ export default function App() {
                 {/* actuator */}
                 <button
                   onClick={() => setRevealed(true)}
+                  disabled={result.empty}
+                  title={result.empty ? "Set inputs above first" : undefined}
                   className="of-display w-full mt-7 rounded-lg text-white inline-flex items-center justify-center gap-3"
                   style={{
                     padding: "13px 16px",
@@ -817,6 +834,8 @@ export default function App() {
                     background: "linear-gradient(#2c2720, #1b1712)",
                     border: "1px solid #0f0d0a",
                     boxShadow: "0 2px 0 rgba(255,255,255,0.35), 0 3px 8px rgba(33,29,24,0.28), inset 0 1px 0 rgba(255,255,255,0.08)",
+                    opacity: result.empty ? 0.45 : 1,
+                    cursor: result.empty ? "not-allowed" : "pointer",
                   }}
                 >
                   <span
@@ -830,7 +849,7 @@ export default function App() {
           </div>
 
           {/* ---------- ISSUED BRIEF ---------- */}
-          {revealed && (
+          {revealed && !result.empty && (
             <section className="of-fade mt-9">
               <SectionRule numeral="III" title="Negotiation Brief" right="for issue to seller" />
               <div className="mt-4 relative overflow-hidden" style={{ ...CARD, borderRadius: 12, padding: "24px 22px" }}>
