@@ -104,6 +104,44 @@ const TIERS = [
   },
 ];
 
+// --- Cars: driver's seat only ---
+// A car seat's exposure is driven by time behind the wheel, which the odometer
+// lets us derive. Only the driver is counted. Assume a 30 mph mixed
+// city/highway door-to-door average, so hours-in-seat = miles / 30. The driver
+// emits at the same 32/day human baseline (≈1.33/hr) with ~0 social suppression
+// — driving alone is a private setting — which works out to ≈0.044 events/mile.
+const CAR_AVG_SPEED_MPH = 30;
+const DRIVING_SUPPRESSION = 0;
+const CAR_EVENTS_PER_MILE = (HUMAN_RATE_PER_HOUR * (1 - DRIVING_SUPPRESSION)) / CAR_AVG_SPEED_MPH;
+
+// Cars accumulate far fewer seat-hours than furniture, so they get their own
+// thresholds (a ~270k-mile beater should read "High", not "Low Concern").
+const CAR_TIERS = [
+  {
+    key: "fresh", label: "Low Concern", max: 2000, color: "#6E8F72",
+    note: "Barely broken in for the miles. If it checks out mechanically, the driver's seat isn't a bargaining point.",
+    ask: "The driver's seat shows minimal accumulation for the mileage; I'm comfortable proceeding at your asking price.",
+  },
+  {
+    key: "ripe", label: "Some History", max: 6000, color: "#D99A2B",
+    note: "Normal for the mileage — which is why used cars sell below sticker. A modest discount request is reasonable.",
+    ask: "Given the mileage and the driver's-seat history, I'd propose a modest adjustment to the asking price.",
+  },
+  {
+    key: "elevated", label: "Elevated", max: 12000, color: "#C1622D",
+    note: "Heavier than average for the miles. Sit in the driver's seat and check the bolster and cushion before you make an offer.",
+    ask: "In light of the elevated figures for the driver's seat, I'd want to inspect it in person and discuss a price that reflects the findings.",
+  },
+  {
+    key: "high", label: "High", max: Infinity, color: "#B4402A",
+    note: "Significant seat-hours. Budget for a detail or ozone treatment — or a seat cover — into your offer, or keep looking.",
+    ask: "The estimated accumulation in the driver's seat is significant, and any offer I make would need to account for detailing or a seat replacement.",
+  },
+];
+
+// Velvet and wool aren't car upholstery; cars pick from these seat materials.
+const CAR_MATERIAL_IDS = ["fabric", "leatherette", "leather"];
+
 // Ring gauge maps the FFi onto a log scale: 10² events ≈ empty, 10^6.5 ≈ full.
 const RING_LOG_MIN = 2;
 const RING_LOG_MAX = 6.5;
@@ -315,22 +353,28 @@ function FieldLabel({ children }) {
   );
 }
 
+// Compact number for tight readouts: 3,333 -> "3.3k".
+function compact(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(Math.round(n));
+}
+
 // A slider with a mono readout window and calibration graduations beneath it.
-function CalibratedSlider({ label, readout, value, min, max, onChange }) {
+function CalibratedSlider({ label, readout, value, min, max, step = 1, onChange }) {
   const span = max - min || 1;
-  const majorEvery = max - min > 8 ? 5 : 1;
+  const count = Math.min(Math.round(span / step), 40); // graduation segments
+  const majorEvery = count > 8 ? 5 : 1;
   const ticks = [];
-  for (let v = min; v <= max; v++) ticks.push({ v, major: (v - min) % majorEvery === 0 || v === max });
+  for (let i = 0; i <= count; i++) ticks.push({ pct: (i / count) * 100, major: i % majorEvery === 0 || i === count });
   return (
     <div>
       <div className="flex items-center justify-between mb-2 gap-2">
         <FieldLabel>{label}</FieldLabel>
         <span className="of-display" style={{ fontSize: 11, fontWeight: 600, color: "#211D18", background: "#EFE7D6", border: "1px solid #D8D0BE", borderRadius: 4, padding: "1px 8px", whiteSpace: "nowrap", boxShadow: "inset 0 1px 1px rgba(255,255,255,0.6)" }}>{readout}</span>
       </div>
-      <input type="range" min={min} max={max} value={value} onChange={onChange} />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={onChange} />
       <div className="relative" style={{ height: 9, marginTop: 5 }} aria-hidden="true">
-        {ticks.map((t) => (
-          <div key={t.v} style={{ position: "absolute", left: `${((t.v - min) / span) * 100}%`, top: 0, transform: "translateX(-50%)", width: 1, height: t.major ? 8 : 5, background: t.major ? "#9a9384" : "#cabfa9" }} />
+        {ticks.map((t, i) => (
+          <div key={i} style={{ position: "absolute", left: `${t.pct}%`, top: 0, transform: "translateX(-50%)", width: 1, height: t.major ? 8 : 5, background: t.major ? "#9a9384" : "#cabfa9" }} />
         ))}
       </div>
     </div>
@@ -358,8 +402,19 @@ export default function App() {
   const [children, setChildren] = useState(0);
   const [pets, setPets] = useState(0);
   const [usage, setUsage] = useState(["tv", "napping"]);
+  const [category, setCategory] = useState("furniture");
+  const [mileage, setMileage] = useState(80000);
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const isCar = category === "car";
+  const materialOptions = isCar ? MATERIAL.filter((m) => CAR_MATERIAL_IDS.includes(m.id)) : MATERIAL;
+
+  const changeCategory = (cat) => {
+    setCategory(cat);
+    // Velvet/wool aren't car upholstery — snap to a sensible seat material.
+    if (cat === "car" && !CAR_MATERIAL_IDS.includes(material)) setMaterial("fabric");
+  };
 
   const usageDisabled = (id) =>
     !allowedForFurniture(furniture, id) || (id === "family" && children === 0);
@@ -380,8 +435,28 @@ export default function App() {
   };
 
   const result = useMemo(() => {
-    const f = FURNITURE.find((x) => x.id === furniture);
     const m = MATERIAL.find((x) => x.id === material);
+    const retention = retentionFor(m.factor);
+    // Each previous owner is an undocumented history — the count doesn't
+    // change, but confidence in it does.
+    const uncertaintyPct = 8 + 7 * owners;
+    const withRange = (ffi) => ({
+      ffi,
+      ffiLow: Math.round(ffi * (1 - uncertaintyPct / 100)),
+      ffiHigh: Math.round(ffi * (1 + uncertaintyPct / 100)),
+    });
+
+    // --- Car: driver's seat only, exposure derived from the odometer ---
+    if (category === "car") {
+      const hoursSeated = mileage / CAR_AVG_SPEED_MPH;
+      const ffi = Math.round(hoursSeated * HUMAN_RATE_PER_HOUR * (1 - DRIVING_SUPPRESSION));
+      const idx = CAR_TIERS.findIndex((t) => ffi <= t.max);
+      const tier = CAR_TIERS[idx === -1 ? CAR_TIERS.length - 1 : idx];
+      return { ...withRange(ffi), uncertaintyPct, hoursSeated, tier, retention, m };
+    }
+
+    // --- Furniture ---
+    const f = FURNITURE.find((x) => x.id === furniture);
 
     const activeUsage = usage
       .map((id) => USAGE_TYPES.find((x) => x.id === id))
@@ -418,19 +493,11 @@ export default function App() {
     const effectiveAge = age === 0 ? 0.5 : age;
     const ffi = Math.round(dailyEvents * DAYS_PER_YEAR * effectiveAge);
 
-    // Each previous owner is an undocumented household — the count doesn't
-    // change, but confidence in it does.
-    const uncertaintyPct = 8 + 7 * owners;
-    const ffiLow = Math.round(ffi * (1 - uncertaintyPct / 100));
-    const ffiHigh = Math.round(ffi * (1 + uncertaintyPct / 100));
-
-    const retention = retentionFor(m.factor);
-
     const idx = TIERS.findIndex((t) => ffi <= t.max);
     const tier = TIERS[idx === -1 ? TIERS.length - 1 : idx];
 
-    return { ffi, ffiLow, ffiHigh, uncertaintyPct, dailyEvents, tier, retention, f, m };
-  }, [furniture, material, age, owners, adults, children, pets, usage]);
+    return { ...withRange(ffi), uncertaintyPct, dailyEvents, tier, retention, f, m };
+  }, [category, mileage, furniture, material, age, owners, adults, children, pets, usage]);
 
   const ringFill =
     result.ffi > 0
@@ -438,13 +505,20 @@ export default function App() {
       : 0;
   const ringDeg = ringFill * 360;
 
-  // A deadpan specimen identifier for the letterhead — regenerates with the
-  // inputs, purely cosmetic (never fed back into the estimate).
-  const specimenNo = `PUE-${result.f.id.slice(0, 3).toUpperCase()}-${String(age).padStart(2, "0")}${owners}${adults}${children}${pets}`;
-
   // A straight-faced, paste-ready message to the seller. The evidence is
   // presented; the human picks the price — the brief never invents a number.
   const negotiationBrief = () => {
+    if (isCar) {
+      return [
+        `Hi — I'm interested in the car. Before we settle on a price, I ran the details through the Prior Use Estimator (methodology per Botasini et al., 2025, Biosensors and Bioelectronics: X).`,
+        ``,
+        `Based on the odometer — roughly ${mileage.toLocaleString()} miles on ${result.m.label.toLowerCase()} seats, with ${owners} previous owner${owners === 1 ? "" : "s"} — the driver's seat carries an estimated ${result.ffi.toLocaleString()} FFi (Flatulence Factor Index: cumulative absorbed flatus events), plausible range ${result.ffiLow.toLocaleString()}–${result.ffiHigh.toLocaleString()}, with ${result.retention.label.toLowerCase()} odor retention from the upholstery. That places the driver's seat in the "${result.tier.label}" band.`,
+        ``,
+        result.tier.ask,
+        ``,
+        `Full methodology and references available on request.`,
+      ].join("\n");
+    }
     // "Sofa (3-seat)" reads fine in a dropdown, oddly in a message to a human.
     const pieceName = result.f.label.replace(/\s*\(.*\)$/, "").toLowerCase();
     const household = [
@@ -519,26 +593,33 @@ export default function App() {
                 </div>
               </div>
               <div>
-                <div className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.28em", textTransform: "uppercase", color: "#A0987F" }}>Certificate of Prior Use</div>
+                <div className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.28em", textTransform: "uppercase", color: "#A0987F" }}>{isCar ? "Pre-owned vehicle appraisal" : "Pre-owned furniture appraisal"}</div>
                 <h1 className="of-body" style={{ fontSize: 30, lineHeight: 1.03, fontWeight: 600, marginTop: 4, letterSpacing: "-0.01em" }}>Prior Use Estimator</h1>
-                <div className="of-display mt-1" style={{ fontSize: 10.5, letterSpacing: "0.05em", color: "#8A8371" }}>Bureau of Upholstery Provenance · Form&nbsp;FFi-01</div>
+                <a href="https://wristskill.com/projects" target="_blank" rel="noopener" className="of-display mt-1 inline-block" style={{ fontSize: 10.5, letterSpacing: "0.05em", color: "#8A8371", textDecoration: "none" }}>A WristSkill project&nbsp;↗</a>
               </div>
             </div>
             <div className="text-right hidden sm:block" style={{ minWidth: 132 }}>
-              <div className="of-display" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Specimen No.</div>
-              <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: "#211D18" }}>{specimenNo}</div>
-              <div className="of-display mt-3" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Classification</div>
+              <div className="of-display" style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "#A0987F" }}>Classification</div>
               <div className="of-display mt-1" style={{ fontSize: 12, fontWeight: 600, color: result.tier.color }}>{result.tier.label}</div>
             </div>
           </header>
 
           {/* preamble */}
           <p className="of-body mt-5" style={{ fontSize: 14.5, lineHeight: 1.65, color: "#4A453A", textWrap: "pretty" }}>
-            For the informed acquisition of pre-owned seating. This instrument estimates the cumulative number of
-            flatus events a piece has absorbed over its service life — calibrated against published flatus-frequency
-            research<span style={{ verticalAlign: "super", fontSize: 10 }}>[1][2]</span> and the compounds known to
-            drive flatus odor<span style={{ verticalAlign: "super", fontSize: 10 }}>[3]</span>. It is evidence assembled
-            for the negotiation, not a laboratory measurement of the specific item.
+            {isCar ? (
+              <>For the informed acquisition of a pre-owned vehicle. This instrument estimates the cumulative number of
+              flatus events the <strong style={{ fontWeight: 600 }}>driver's seat</strong> has absorbed over its service
+              life, derived from the odometer — calibrated against published flatus-frequency
+              research<span style={{ verticalAlign: "super", fontSize: 10 }}>[1][2]</span> and the compounds known to
+              drive flatus odor<span style={{ verticalAlign: "super", fontSize: 10 }}>[3]</span>. It is evidence assembled
+              for the negotiation, not a laboratory measurement of the specific vehicle.</>
+            ) : (
+              <>For the informed acquisition of pre-owned seating. This instrument estimates the cumulative number of
+              flatus events a piece has absorbed over its service life — calibrated against published flatus-frequency
+              research<span style={{ verticalAlign: "super", fontSize: 10 }}>[1][2]</span> and the compounds known to
+              drive flatus odor<span style={{ verticalAlign: "super", fontSize: 10 }}>[3]</span>. It is evidence assembled
+              for the negotiation, not a laboratory measurement of the specific item.</>
+            )}
           </p>
 
           {/* ---------- INSTRUMENT + PARAMETERS ---------- */}
@@ -558,11 +639,11 @@ export default function App() {
               >
                 <div className="flex items-center justify-between mb-4">
                   <span className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "#8a8065" }}>Ring gauge · log₁₀</span>
-                  <span className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>events / day</span>
+                  <span className="of-display" style={{ fontSize: 8.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a8065" }}>{isCar ? "hours in seat" : "events / day"}</span>
                 </div>
 
                 <div className="flex justify-center">
-                  <BrassGauge fill={ringFill} deg={ringDeg} color={result.tier.color} center={Math.round(result.dailyEvents)} unit="per day" />
+                  <BrassGauge fill={ringFill} deg={ringDeg} color={result.tier.color} center={isCar ? compact(result.hoursSeated) : Math.round(result.dailyEvents)} unit={isCar ? "hrs seated" : "per day"} />
                 </div>
 
                 {/* lifetime readout */}
@@ -587,7 +668,7 @@ export default function App() {
 
                 {/* footnote — FFi definition kept inconspicuous */}
                 <p className="of-display mt-4" style={{ fontSize: 9.5, lineHeight: 1.6, color: "#7d7460" }}>
-                  FFi — Flatulence Factor Index: estimated cumulative flatus events absorbed over the piece's lifetime.
+                  FFi — Flatulence Factor Index: estimated cumulative flatus events absorbed over the {isCar ? "driver's seat's" : "piece's"} lifetime.
                   Range {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()} (±{result.uncertaintyPct}%, widening
                   with each undocumented previous owner).
                 </p>
@@ -596,82 +677,116 @@ export default function App() {
 
             {/* PARAMETERS FORM */}
             <section>
-              <SectionRule numeral="II" title="Specimen Parameters" right="declared by buyer" />
+              <SectionRule numeral="II" title={isCar ? "Vehicle Parameters" : "Piece Parameters"} right="declared by buyer" />
               <div className="mt-4" style={{ ...CARD, borderRadius: 12, padding: "22px 20px" }}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-                  <div>
-                    <div className="mb-2"><FieldLabel>Furniture type</FieldLabel></div>
-                    <select value={furniture} onChange={(e) => changeFurniture(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
-                      {FURNITURE.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <div className="mb-2"><FieldLabel>Upholstery</FieldLabel></div>
-                    <select value={material} onChange={(e) => setMaterial(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
-                      {MATERIAL.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
-                  <CalibratedSlider label="Age" readout={age === 0 ? "<1 yr" : `${age} ${age === 1 ? "yr" : "yrs"}`} value={age} min={0} max={25} onChange={(e) => setAge(Number(e.target.value))} />
-                  <CalibratedSlider label="Prev. owners" readout={String(owners)} value={owners} min={0} max={6} onChange={(e) => setOwners(Number(e.target.value))} />
-                </div>
-
-                <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-6">
-                  <CalibratedSlider label="Adults" readout={String(adults)} value={adults} min={0} max={6} onChange={(e) => setAdults(Number(e.target.value))} />
-                  <CalibratedSlider label="Children" readout={String(children)} value={children} min={0} max={8} onChange={(e) => changeChildren(Number(e.target.value))} />
-                  <CalibratedSlider label="Dogs" readout={String(pets)} value={pets} min={0} max={5} onChange={(e) => setPets(Number(e.target.value))} />
-                </div>
-
-                {/* usage checklist */}
-                <div className="mt-7">
-                  <div className="mb-3"><FieldLabel>Primary use — select all applicable</FieldLabel></div>
-                  <div className="flex flex-wrap gap-2">
-                    {USAGE_TYPES.map((u) => {
-                      const disabled = usageDisabled(u.id);
-                      const active = !disabled && usage.includes(u.id);
+                {/* category toggle */}
+                <div className="mb-5">
+                  <div className="mb-2"><FieldLabel>Category</FieldLabel></div>
+                  <div className="inline-flex rounded-md overflow-hidden" style={{ border: "1px solid #D8D0BE" }}>
+                    {[{ id: "furniture", label: "Furniture" }, { id: "car", label: "Car — driver's seat" }].map((c) => {
+                      const on = category === c.id;
                       return (
-                        <button
-                          key={u.id}
-                          onClick={() => toggleUsage(u.id)}
-                          disabled={disabled}
-                          title={disabled
-                            ? u.id === "family"
-                              ? "Set Children above 0 first"
-                              : `Not applicable to ${result.f.label.toLowerCase()}`
-                            : undefined}
-                          className="of-display inline-flex items-center gap-2 text-xs rounded-md"
-                          style={{
-                            padding: "6px 11px",
-                            letterSpacing: "0.01em",
-                            border: `1px solid ${disabled ? "#D3CBBA" : active ? "#211D18" : "#D3CBB9"}`,
-                            background: disabled
-                              ? "repeating-linear-gradient(135deg, #EBE6DA, #EBE6DA 5px, #E1DBCC 5px, #E1DBCC 10px)"
-                              : active ? "#211D18" : "#FBF9F3",
-                            color: disabled ? "#8A8272" : active ? "#F4EFE4" : "#4A453A",
-                            cursor: disabled ? "not-allowed" : "pointer",
-                            boxShadow: active ? "0 1px 2px rgba(33,29,24,0.25)" : "none",
-                          }}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className="inline-flex items-center justify-center"
-                            style={{
-                              width: 13, height: 13, borderRadius: 3, fontSize: 10, lineHeight: 1,
-                              border: `1px solid ${disabled ? "#C9C1B0" : active ? "#F4EFE4" : "#B7AF9C"}`,
-                              background: active ? "#C1622D" : "transparent",
-                              color: "#F4EFE4",
-                            }}
-                          >
-                            {active ? "✓" : disabled ? "–" : ""}
-                          </span>
-                          {u.label}
+                        <button key={c.id} onClick={() => changeCategory(c.id)} className="of-display" style={{ fontSize: 10.5, letterSpacing: "0.08em", textTransform: "uppercase", padding: "7px 14px", background: on ? "#211D18" : "#FBF9F4", color: on ? "#F4EFE4" : "#6B6656", cursor: "pointer" }}>
+                          {c.label}
                         </button>
                       );
                     })}
                   </div>
                 </div>
+
+                {isCar ? (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+                      <div>
+                        <div className="mb-2"><FieldLabel>Seat material</FieldLabel></div>
+                        <select value={material} onChange={(e) => setMaterial(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
+                          {materialOptions.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        </select>
+                      </div>
+                      <CalibratedSlider label="Prev. owners" readout={String(owners)} value={owners} min={0} max={6} onChange={(e) => setOwners(Number(e.target.value))} />
+                    </div>
+                    <div className="mt-6">
+                      <CalibratedSlider label="Odometer" readout={`${mileage.toLocaleString()} mi`} value={mileage} min={0} max={300000} step={5000} onChange={(e) => setMileage(Number(e.target.value))} />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                      <div>
+                        <div className="mb-2"><FieldLabel>Furniture type</FieldLabel></div>
+                        <select value={furniture} onChange={(e) => changeFurniture(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
+                          {FURNITURE.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div className="mb-2"><FieldLabel>Upholstery</FieldLabel></div>
+                        <select value={material} onChange={(e) => setMaterial(e.target.value)} className="of-body w-full rounded-md px-3 py-2 text-sm" style={SELECT_STYLE}>
+                          {MATERIAL.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+                      <CalibratedSlider label="Age" readout={age === 0 ? "<1 yr" : `${age} ${age === 1 ? "yr" : "yrs"}`} value={age} min={0} max={25} onChange={(e) => setAge(Number(e.target.value))} />
+                      <CalibratedSlider label="Prev. owners" readout={String(owners)} value={owners} min={0} max={6} onChange={(e) => setOwners(Number(e.target.value))} />
+                    </div>
+
+                    <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-6">
+                      <CalibratedSlider label="Adults" readout={String(adults)} value={adults} min={0} max={6} onChange={(e) => setAdults(Number(e.target.value))} />
+                      <CalibratedSlider label="Children" readout={String(children)} value={children} min={0} max={8} onChange={(e) => changeChildren(Number(e.target.value))} />
+                      <CalibratedSlider label="Dogs" readout={String(pets)} value={pets} min={0} max={5} onChange={(e) => setPets(Number(e.target.value))} />
+                    </div>
+
+                    {/* usage checklist */}
+                    <div className="mt-7">
+                      <div className="mb-3"><FieldLabel>Primary use — select all applicable</FieldLabel></div>
+                      <div className="flex flex-wrap gap-2">
+                        {USAGE_TYPES.map((u) => {
+                          const disabled = usageDisabled(u.id);
+                          const active = !disabled && usage.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              onClick={() => toggleUsage(u.id)}
+                              disabled={disabled}
+                              title={disabled
+                                ? u.id === "family"
+                                  ? "Set Children above 0 first"
+                                  : `Not applicable to ${result.f.label.toLowerCase()}`
+                                : undefined}
+                              className="of-display inline-flex items-center gap-2 text-xs rounded-md"
+                              style={{
+                                padding: "6px 11px",
+                                letterSpacing: "0.01em",
+                                border: `1px solid ${disabled ? "#D3CBBA" : active ? "#211D18" : "#D3CBB9"}`,
+                                background: disabled
+                                  ? "repeating-linear-gradient(135deg, #EBE6DA, #EBE6DA 5px, #E1DBCC 5px, #E1DBCC 10px)"
+                                  : active ? "#211D18" : "#FBF9F3",
+                                color: disabled ? "#8A8272" : active ? "#F4EFE4" : "#4A453A",
+                                cursor: disabled ? "not-allowed" : "pointer",
+                                boxShadow: active ? "0 1px 2px rgba(33,29,24,0.25)" : "none",
+                              }}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className="inline-flex items-center justify-center"
+                                style={{
+                                  width: 13, height: 13, borderRadius: 3, fontSize: 10, lineHeight: 1,
+                                  border: `1px solid ${disabled ? "#C9C1B0" : active ? "#F4EFE4" : "#B7AF9C"}`,
+                                  background: active ? "#C1622D" : "transparent",
+                                  color: "#F4EFE4",
+                                }}
+                              >
+                                {active ? "✓" : disabled ? "–" : ""}
+                              </span>
+                              {u.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* actuator */}
                 <button
@@ -703,19 +818,23 @@ export default function App() {
             <section className="of-fade mt-9">
               <SectionRule numeral="III" title="Negotiation Brief" right="for issue to seller" />
               <div className="mt-4 relative overflow-hidden" style={{ ...CARD, borderRadius: 12, padding: "24px 22px" }}>
-                {/* watermark corner */}
-                <div aria-hidden="true" className="of-display" style={{ position: "absolute", top: 14, right: 18, fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C4BCA9" }}>{specimenNo}</div>
-
                 <div className="of-display" style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "#A0987F" }}>Summary of Findings</div>
                 <p className="of-body mt-3" style={{ fontSize: 15, lineHeight: 1.68, color: "#3B372E", textWrap: "pretty" }}>
-                  A {age === 0 ? "nearly new" : `${age}-year-old`} {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
-                  of {adults} adult{adults === 1 ? "" : "s"}
-                  {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
-                  {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"} (on their own schedule)` : ""}, with{" "}
-                  {owners} previous owner{owners === 1 ? "" : "s"}
-                  {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
-                  <strong style={{ fontWeight: 700 }}>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
-                  <strong style={{ fontWeight: 700 }}>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.
+                  {isCar ? (
+                    <>The driver's seat of a car showing roughly {mileage.toLocaleString()} miles on {result.m.label.toLowerCase()} upholstery, with{" "}
+                    {owners} previous owner{owners === 1 ? "" : "s"}, comes back with an estimated{" "}
+                    <strong style={{ fontWeight: 700 }}>{result.ffi.toLocaleString()} FFi</strong> (≈{compact(result.hoursSeated)} hours behind the wheel) and{" "}
+                    <strong style={{ fontWeight: 700 }}>{result.retention.label.toLowerCase()}</strong> odor retention risk from the seat material.</>
+                  ) : (
+                    <>A {age === 0 ? "nearly new" : `${age}-year-old`} {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
+                    of {adults} adult{adults === 1 ? "" : "s"}
+                    {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
+                    {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"} (on their own schedule)` : ""}, with{" "}
+                    {owners} previous owner{owners === 1 ? "" : "s"}
+                    {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
+                    <strong style={{ fontWeight: 700 }}>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
+                    <strong style={{ fontWeight: 700 }}>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.</>
+                  )}
                 </p>
                 <p className="of-body mt-4" style={{ fontSize: 14, lineHeight: 1.6, fontStyle: "italic", color: result.tier.color, paddingLeft: 14, borderLeft: `2px solid ${result.tier.color}` }}>{result.tier.note}</p>
 
@@ -765,30 +884,39 @@ export default function App() {
 
           {/* ---------- JOURNAL REPRINT: METHODOLOGY + REFERENCES ---------- */}
           <section className="mt-10 pt-7" style={{ borderTop: "2px solid #211D18" }}>
-            <div className="flex items-baseline justify-between flex-wrap gap-2">
-              <span className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "#8A8371" }}>Technical Supplement · reprint</span>
-              <span className="of-display" style={{ fontSize: 9.5, letterSpacing: "0.12em", color: "#A79F8C" }}>Biosensors &amp; Bioelectronics: X, 27</span>
-            </div>
-
-            <h2 className="of-body mt-4" style={{ fontSize: 19, fontWeight: 600 }}>Methodology</h2>
+            <h2 className="of-body" style={{ fontSize: 19, fontWeight: 600 }}>Methodology</h2>
             <p className="of-body mt-2" style={{ fontSize: 13.5, lineHeight: 1.72, color: "#3B372E", textAlign: "justify", hyphens: "auto", WebkitHyphens: "auto" }}>
               The FFi is a direct event count, not a score. Adults emit a baseline of {FLATUS_EVENTS_PER_DAY} flatus
-              events per day [1], spread across the full 24-hour day (≈1.3/hr) so that sleeping on the piece is
-              counted at the same rate as sitting on it; earlier clinical estimates put the daily baseline closer
-              to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but suppress roughly half as
-              much. Dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social suppression whatsoever
-              (a stated model assumption — no wearable-sensor canine study exists yet), and unlike humans they use
-              the furniture on their own schedule: {DOG_HOURS_ON_FURNITURE} hours a day, scaled by how inviting the
-              piece is to lie on (an office chair holds little appeal). Each selected activity contributes its
-              typical daily hours, discounted by an adult social-suppression factor (video calls suppress roughly
-              60% of urges, guests ~90%); total household occupancy is capped at {MAX_OCCUPIED_HOURS_PER_DAY} hours
-              a day. Seat count caps concurrent occupancy — a sectional absorbs the whole household at once, while
-              an office chair hosts exactly one emitter — and the daily total is compounded over the item's age
-              (a piece under a year old is counted as six months). Previous owners don't change the count, only the
-              confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity
-              itself tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery
-              retention is reported as its own rating and never alters the count or its tier.
+              events per day [1], spread across the full 24-hour day (≈1.3/hr); earlier clinical estimates put the
+              daily baseline closer to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Odor intensity itself tracks hydrogen
+              sulfide concentration rather than gas volume [3], which is why upholstery retention is reported as its
+              own rating and never alters the count or its tier. Previous owners don't change the count, only the
+              confidence in it: each undocumented history widens the uncertainty range by ±7%.
             </p>
+            {!isCar && (
+              <p className="of-body mt-3" style={{ fontSize: 13.5, lineHeight: 1.72, color: "#3B372E", textAlign: "justify", hyphens: "auto", WebkitHyphens: "auto" }}>
+                For furniture, the daily total combines every occupant. Children emit at the adult rate but suppress
+                roughly half as much; dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social
+                suppression whatsoever (a stated model assumption — no wearable-sensor canine study exists yet), and
+                unlike humans they use the furniture on their own schedule: {DOG_HOURS_ON_FURNITURE} hours a day,
+                scaled by how inviting the piece is to lie on (an office chair holds little appeal). Each selected
+                activity contributes its typical daily hours, discounted by an adult social-suppression factor (video
+                calls suppress roughly 60% of urges, guests ~90%); total household occupancy is capped at{" "}
+                {MAX_OCCUPIED_HOURS_PER_DAY} hours a day. Seat count caps concurrent occupancy — a sectional absorbs
+                the whole household at once, while an office chair hosts exactly one emitter — and the daily total is
+                compounded over the item's age (a piece under a year old is counted as six months).
+              </p>
+            )}
+            {isCar && (
+              <p className="of-body mt-3" style={{ fontSize: 13.5, lineHeight: 1.72, color: "#3B372E", textAlign: "justify", hyphens: "auto", WebkitHyphens: "auto" }}>
+                For vehicles, only the driver's seat is assessed. Time behind the wheel is derived from the odometer
+                at an assumed {CAR_AVG_SPEED_MPH} mph mixed city/highway average (hours = miles ÷ {CAR_AVG_SPEED_MPH}),
+                and the driver emits at the same {FLATUS_EVENTS_PER_DAY}-per-day baseline with negligible social
+                suppression, since driving alone is a private setting — about {CAR_EVENTS_PER_MILE.toFixed(3)} events
+                per mile. Because a car accumulates far fewer seat-hours than household furniture, vehicles are scored
+                against their own tier thresholds.
+              </p>
+            )}
 
             <h2 className="of-body mt-7" style={{ fontSize: 19, fontWeight: 600 }}>References</h2>
             <ol className="of-body mt-2" style={{ fontSize: 12.5, lineHeight: 1.6, color: "#4A453A", listStyle: "none", padding: 0 }}>
@@ -816,8 +944,8 @@ export default function App() {
 
           {/* page footer */}
           <footer className="mt-9 pt-4 flex items-center justify-between flex-wrap gap-2" style={{ borderTop: "1px solid #DDD5C4" }}>
-            <span className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C" }}>Prior Use Estimator · methodology per Botasini et al. 2025</span>
-            <span className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C" }}>{specimenNo} · sheet 1 of 1</span>
+            <span className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C" }}>© 2026 WristSkillLabs LLC</span>
+            <a href="https://wristskill.com/projects" target="_blank" rel="noopener" className="of-display" style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#A79F8C", textDecoration: "none" }}>More projects at wristskill.com&nbsp;↗</a>
           </footer>
         </div>
       </div>
