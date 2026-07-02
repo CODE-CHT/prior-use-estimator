@@ -1,12 +1,17 @@
 import { useState, useMemo } from "react";
 
+// Furniture types are distinguished by seat capacity (a sectional is just a
+// bigger sofa, so the labels say so) and by how attractive they are to a dog
+// looking for somewhere to spend the day. Types with a `uses` list only allow
+// those activities; the rest allow everything.
 const FURNITURE = [
-  { id: "armchair", label: "Armchair", seats: 1 },
-  { id: "couch", label: "Couch / Sofa", seats: 3 },
-  { id: "sectional", label: "Sectional", seats: 5 },
-  { id: "recliner", label: "Recliner", seats: 1 },
-  { id: "office", label: "Office Chair", seats: 1 },
-  { id: "ottoman", label: "Ottoman", seats: 0.5 },
+  { id: "armchair", label: "Armchair", seats: 1, dogAppeal: 0.7 },
+  { id: "loveseat", label: "Loveseat (2-seat)", seats: 2, dogAppeal: 1 },
+  { id: "sofa", label: "Sofa (3-seat)", seats: 3, dogAppeal: 1 },
+  { id: "sectional", label: "Sectional (5-seat)", seats: 5, dogAppeal: 1 },
+  { id: "recliner", label: "Recliner", seats: 1, dogAppeal: 0.8 },
+  { id: "office", label: "Office Chair", seats: 1, dogAppeal: 0.1, uses: ["wfh", "gaming", "eating"] },
+  { id: "ottoman", label: "Ottoman", seats: 0.5, dogAppeal: 0.6, uses: ["tv", "eating", "family", "guest"] },
 ];
 
 const MATERIAL = [
@@ -21,19 +26,26 @@ const MATERIAL = [
 // Adults pass gas ~32 times/day on average when measured continuously with a
 // wearable sensor (Botasini et al., 2025) [1] — roughly double the ~14/day
 // figure from earlier clinical estimates based on self-report and short
-// observation windows (Tomlin, Lowis, & Read, 1991) [2]. We use the higher,
-// sensor-measured baseline since it captures sleep-time and socially
-// suppressed events that older methods missed.
+// observation windows (Tomlin, Lowis, & Read, 1991) [2]. The sensor baseline
+// covers the full 24-hour day including sleep, so the hourly rate is spread
+// over 24 hours — this keeps sleeping and waking activities on the same
+// footing instead of double-counting sleep events at a waking-only rate.
 const FLATUS_EVENTS_PER_DAY = 32; // Botasini et al., 2025 [1]
 const FLATUS_EVENTS_PER_DAY_LEGACY = 14; // Tomlin, Lowis, & Read, 1991 [2]
-const WAKING_HOURS = 16;
-const HUMAN_RATE_PER_HOUR = FLATUS_EVENTS_PER_DAY / WAKING_HOURS; // ≈2/hr
+const HUMAN_RATE_PER_HOUR = FLATUS_EVENTS_PER_DAY / 24; // ≈1.33/hr, uniform
 // Dogs emit at a minimum of 1.5× the human rate (stated model assumption — no
-// wearable-sensor canine study exists yet) and experience no social suppression.
+// wearable-sensor canine study exists yet) and experience no social
+// suppression. Unlike humans, a dog's furniture time doesn't follow the
+// household's activities: it occupies the piece on its own schedule, modeled
+// as 6 hours/day scaled by how appealing the piece is to lie on.
 const DOG_RATE_MULTIPLIER = 1.5;
-const DOG_RATE_PER_HOUR = HUMAN_RATE_PER_HOUR * DOG_RATE_MULTIPLIER; // 3/hr
+const DOG_RATE_PER_HOUR = HUMAN_RATE_PER_HOUR * DOG_RATE_MULTIPLIER; // 2/hr
+const DOG_HOURS_ON_FURNITURE = 6;
 // Children emit at the adult rate but suppress roughly half as much.
 const CHILD_SUPPRESSION_FACTOR = 0.5;
+// A household can't collectively occupy the piece more than 16 hours a day;
+// selecting every activity scales the claimed hours down to this cap.
+const MAX_OCCUPIED_HOURS_PER_DAY = 16;
 const DAYS_PER_YEAR = 365.25;
 
 // Each usage type carries a typical daily duration spent on the piece and a
@@ -61,8 +73,9 @@ function retentionFor(factor) {
   return RETENTION_LEVELS.find((r) => factor <= r.max) || RETENTION_LEVELS[RETENTION_LEVELS.length - 1];
 }
 
-// Tier thresholds are lifetime event counts. A typical 5-year family couch
-// lands around 30,000 events, anchoring "Some History".
+// Tier thresholds are lifetime event counts, from the count alone — odor
+// retention is a separate axis and no longer bumps the tier. A typical 5-year
+// two-adult sofa lands around 20,000 events, anchoring "Some History".
 const TIERS = [
   { key: "fresh", label: "Low Concern", max: 10000, color: "#6E8F72", note: "Nothing here that should factor into your decision." },
   { key: "ripe", label: "Some History", max: 50000, color: "#D99A2B", note: "Typical accumulation for a used piece. A wipe-down and airing out should be plenty." },
@@ -76,6 +89,11 @@ const RING_LOG_MAX = 6.5;
 
 const DIGIT_HEIGHT = 38;
 const DIGIT_WIDTH = 22;
+
+function allowedForFurniture(furnitureId, usageId) {
+  const f = FURNITURE.find((x) => x.id === furnitureId);
+  return !f?.uses || f.uses.includes(usageId);
+}
 
 function OdometerDigit({ digit }) {
   return (
@@ -131,7 +149,7 @@ function OdometerReadout({ value }) {
 }
 
 export default function App() {
-  const [furniture, setFurniture] = useState("couch");
+  const [furniture, setFurniture] = useState("sofa");
   const [material, setMaterial] = useState("fabric");
   const [age, setAge] = useState(5);
   const [owners, setOwners] = useState(1);
@@ -141,29 +159,58 @@ export default function App() {
   const [usage, setUsage] = useState(["tv", "napping"]);
   const [revealed, setRevealed] = useState(false);
 
-  const toggleUsage = (id) =>
+  const usageDisabled = (id) =>
+    !allowedForFurniture(furniture, id) || (id === "family" && children === 0);
+
+  const toggleUsage = (id) => {
+    if (usageDisabled(id)) return;
     setUsage((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]));
+  };
+
+  const changeFurniture = (id) => {
+    setFurniture(id);
+    setUsage((u) => u.filter((x) => allowedForFurniture(id, x)));
+  };
+
+  const changeChildren = (n) => {
+    setChildren(n);
+    if (n === 0) setUsage((u) => u.filter((x) => x !== "family"));
+  };
 
   const result = useMemo(() => {
     const f = FURNITURE.find((x) => x.id === furniture);
     const m = MATERIAL.find((x) => x.id === material);
 
+    const activeUsage = usage
+      .map((id) => USAGE_TYPES.find((x) => x.id === id))
+      .filter((u) => u && allowedForFurniture(furniture, u.id) && !(u.id === "family" && children === 0));
+
     // Seat capacity caps how much of the household can occupy the piece at
     // once: a sectional hosts the whole family, an office chair one emitter.
-    const occupants = adults + children + pets;
-    const fillFraction = occupants > 0 ? Math.min(f.seats, occupants) / occupants : 0;
+    const humans = adults + children;
+    const humanFill = humans > 0 ? Math.min(f.seats, humans) / humans : 0;
 
-    const dailyEvents = usage.reduce((sum, id) => {
-      const u = USAGE_TYPES.find((x) => x.id === id);
-      if (!u) return sum;
-      const householdRatePerHour =
+    // The household can't collectively sit on the piece more than 16 h/day.
+    const claimedHours = activeUsage.reduce((s, u) => s + u.hours, 0);
+    const hourScale = claimedHours > MAX_OCCUPIED_HOURS_PER_DAY ? MAX_OCCUPIED_HOURS_PER_DAY / claimedHours : 1;
+
+    const humanDaily = activeUsage.reduce((sum, u) => {
+      const ratePerHour =
         adults * HUMAN_RATE_PER_HOUR * (1 - u.suppression) +
-        children * HUMAN_RATE_PER_HOUR * (1 - u.suppression * CHILD_SUPPRESSION_FACTOR) +
-        pets * DOG_RATE_PER_HOUR;
-      return sum + u.hours * householdRatePerHour * fillFraction;
+        children * HUMAN_RATE_PER_HOUR * (1 - u.suppression * CHILD_SUPPRESSION_FACTOR);
+      return sum + u.hours * hourScale * ratePerHour * humanFill;
     }, 0);
 
-    const ffi = Math.round(dailyEvents * DAYS_PER_YEAR * age);
+    // Dogs run on their own schedule, independent of household activities,
+    // capped by seats and scaled by how inviting the piece is to lie on.
+    const dogDaily = Math.min(f.seats, pets) * DOG_RATE_PER_HOUR * DOG_HOURS_ON_FURNITURE * f.dogAppeal;
+
+    const dailyEvents = humanDaily + dogDaily;
+
+    // Age 0 on the slider means "under a year" — call it six months, since
+    // even a nearly-new piece has a history.
+    const effectiveAge = age === 0 ? 0.5 : age;
+    const ffi = Math.round(dailyEvents * DAYS_PER_YEAR * effectiveAge);
 
     // Each previous owner is an undocumented household — the count doesn't
     // change, but confidence in it does.
@@ -173,13 +220,10 @@ export default function App() {
 
     const retention = retentionFor(m.factor);
 
-    const baseIdx = TIERS.findIndex((t) => ffi <= t.max);
-    const idx = baseIdx === -1 ? TIERS.length - 1 : baseIdx;
-    const bumpedIdx = retention.key === "high" ? Math.min(idx + 1, TIERS.length - 1) : idx;
-    const tier = TIERS[bumpedIdx];
-    const bumped = bumpedIdx > idx;
+    const idx = TIERS.findIndex((t) => ffi <= t.max);
+    const tier = TIERS[idx === -1 ? TIERS.length - 1 : idx];
 
-    return { ffi, ffiLow, ffiHigh, uncertaintyPct, dailyEvents, tier, retention, bumped, f, m };
+    return { ffi, ffiLow, ffiHigh, uncertaintyPct, dailyEvents, tier, retention, f, m };
   }, [furniture, material, age, owners, adults, children, pets, usage]);
 
   const ringFill =
@@ -233,11 +277,6 @@ export default function App() {
             <span className="text-sm" style={{ color: "#6B6656" }}>Odor retention risk (material)</span>
             <span className="of-display text-sm" style={{ color: result.retention.color }}>{result.retention.label}</span>
           </div>
-          {result.bumped && (
-            <p className="text-xs mt-2" style={{ color: "#9A9384" }}>
-              This rating was raised a level because {result.m.label.toLowerCase()} holds odor longer than the event count alone would suggest.
-            </p>
-          )}
           <p className="text-xs mt-3" style={{ color: "#B5AF9F" }}>
             FFi — Flatulence Factor Index: the estimated cumulative number of flatus events this piece has absorbed
             over its lifetime. Range: {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()}{" "}
@@ -249,7 +288,7 @@ export default function App() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs" style={{ color: "#6B6656" }}>Furniture type</label>
-              <select value={furniture} onChange={(e) => setFurniture(e.target.value)} className="w-full mt-1.5 rounded-lg px-3 py-2 text-sm" style={{ border: "1px solid #E4DFD6", background: "#FBF9F4", color: "#211D18" }}>
+              <select value={furniture} onChange={(e) => changeFurniture(e.target.value)} className="w-full mt-1.5 rounded-lg px-3 py-2 text-sm" style={{ border: "1px solid #E4DFD6", background: "#FBF9F4", color: "#211D18" }}>
                 {FURNITURE.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
             </div>
@@ -263,7 +302,7 @@ export default function App() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-xs" style={{ color: "#6B6656" }}>Age: {age} {age === 1 ? "yr" : "yrs"}</label>
+              <label className="text-xs" style={{ color: "#6B6656" }}>Age: {age === 0 ? "<1 yr" : `${age} ${age === 1 ? "yr" : "yrs"}`}</label>
               <input type="range" min="0" max="25" value={age} onChange={(e) => setAge(Number(e.target.value))} className="w-full mt-3" />
             </div>
             <div>
@@ -279,7 +318,7 @@ export default function App() {
             </div>
             <div>
               <label className="text-xs" style={{ color: "#6B6656" }}>Children: {children}</label>
-              <input type="range" min="0" max="8" value={children} onChange={(e) => setChildren(Number(e.target.value))} className="w-full mt-3" />
+              <input type="range" min="0" max="8" value={children} onChange={(e) => changeChildren(Number(e.target.value))} className="w-full mt-3" />
             </div>
             <div>
               <label className="text-xs" style={{ color: "#6B6656" }}>Dogs: {pets}</label>
@@ -291,9 +330,26 @@ export default function App() {
             <label className="text-xs" style={{ color: "#6B6656" }}>Primary use (select all that apply)</label>
             <div className="flex flex-wrap gap-2 mt-2">
               {USAGE_TYPES.map((u) => {
-                const active = usage.includes(u.id);
+                const disabled = usageDisabled(u.id);
+                const active = !disabled && usage.includes(u.id);
                 return (
-                  <button key={u.id} onClick={() => toggleUsage(u.id)} className="text-xs px-3 py-1.5 rounded-full transition-colors" style={{ border: `1px solid ${active ? "#C1622D" : "#E4DFD6"}`, background: active ? "#C1622D" : "#FBF9F4", color: active ? "#FFFFFF" : "#4A453A" }}>
+                  <button
+                    key={u.id}
+                    onClick={() => toggleUsage(u.id)}
+                    disabled={disabled}
+                    title={disabled
+                      ? u.id === "family"
+                        ? "Set Children above 0 first"
+                        : `Not applicable to ${result.f.label.toLowerCase()}`
+                      : undefined}
+                    className="text-xs px-3 py-1.5 rounded-full transition-colors"
+                    style={{
+                      border: `1px solid ${active ? "#C1622D" : "#E4DFD6"}`,
+                      background: disabled ? "#F6F4EE" : active ? "#C1622D" : "#FBF9F4",
+                      color: disabled ? "#C4BEAF" : active ? "#FFFFFF" : "#4A453A",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                    }}
+                  >
                     {u.label}
                   </button>
                 );
@@ -310,10 +366,10 @@ export default function App() {
           <div className="of-fade rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
             <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Summary</div>
             <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
-              A {age}-year-old {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
+              A {age === 0 ? "nearly new" : `${age}-year-old`} {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
               of {adults} adult{adults === 1 ? "" : "s"}
               {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
-              {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"}` : ""}, with{" "}
+              {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"} (on their own schedule)` : ""}, with{" "}
               {owners} previous owner{owners === 1 ? "" : "s"}
               {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
               <strong>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
@@ -330,17 +386,21 @@ export default function App() {
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Methodology</div>
           <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
             The FFi is a direct event count, not a score. Adults emit a baseline of {FLATUS_EVENTS_PER_DAY} flatus
-            events per day across a {WAKING_HOURS}-hour waking day (≈{HUMAN_RATE_PER_HOUR}/hr) [1]; earlier clinical
-            estimates put that closer to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but
-            suppress roughly half as much; dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social
-            suppression whatsoever (a stated model assumption — no wearable-sensor canine study exists yet). Each
-            selected activity contributes its typical daily hours, discounted by an adult social-suppression factor
-            (video calls suppress roughly 60% of urges, guests ~90%). Seat count caps concurrent occupancy — a
-            sectional absorbs the whole household at once, while an office chair hosts exactly one emitter — and the
-            daily total is compounded over the item's age. Previous owners don't change the count, only the
-            confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity itself
-            tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery retention is
-            scored separately from the count.
+            events per day [1], spread across the full 24-hour day (≈1.3/hr) so that sleeping on the piece is
+            counted at the same rate as sitting on it; earlier clinical estimates put the daily baseline closer
+            to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but suppress roughly half as
+            much. Dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social suppression whatsoever
+            (a stated model assumption — no wearable-sensor canine study exists yet), and unlike humans they use
+            the furniture on their own schedule: {DOG_HOURS_ON_FURNITURE} hours a day, scaled by how inviting the
+            piece is to lie on (an office chair holds little appeal). Each selected activity contributes its
+            typical daily hours, discounted by an adult social-suppression factor (video calls suppress roughly
+            60% of urges, guests ~90%); total household occupancy is capped at {MAX_OCCUPIED_HOURS_PER_DAY} hours
+            a day. Seat count caps concurrent occupancy — a sectional absorbs the whole household at once, while
+            an office chair hosts exactly one emitter — and the daily total is compounded over the item's age
+            (a piece under a year old is counted as six months). Previous owners don't change the count, only the
+            confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity
+            itself tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery
+            retention is reported as its own rating and never alters the count or its tier.
           </p>
         </div>
 
