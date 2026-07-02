@@ -402,7 +402,7 @@ export default function App() {
   const [adults, setAdults] = useState(2);
   const [children, setChildren] = useState(0);
   const [pets, setPets] = useState(0);
-  const [usage, setUsage] = useState(["tv", "napping"]);
+  const [usage, setUsage] = useState(["everyday"]);
   const [category, setCategory] = useState("furniture");
   const [mileage, setMileage] = useState(80000);
   const [revealed, setRevealed] = useState(false);
