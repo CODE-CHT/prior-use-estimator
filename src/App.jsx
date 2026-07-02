@@ -12,6 +12,9 @@ const FURNITURE = [
   { id: "recliner", label: "Recliner", seats: 1, dogAppeal: 0.8 },
   { id: "office", label: "Office Chair", seats: 1, dogAppeal: 0.1, uses: ["wfh", "gaming", "eating"] },
   { id: "ottoman", label: "Ottoman", seats: 0.5, dogAppeal: 0.6, uses: ["tv", "eating", "family", "guest"] },
+  // On a mattress, "napping / sleeping" is a full night, not a 1.5-hour nap —
+  // hourOverrides replaces a usage type's default daily hours for this piece.
+  { id: "mattress", label: "Mattress", seats: 2, dogAppeal: 1, uses: ["napping", "tv", "wfh", "gaming", "eating", "family"], hourOverrides: { napping: 8 } },
 ];
 
 const MATERIAL = [
@@ -209,15 +212,19 @@ export default function App() {
     const humans = adults + children;
     const humanFill = humans > 0 ? Math.min(f.seats, humans) / humans : 0;
 
+    // Some pieces redefine an activity's daily hours (a mattress turns
+    // "napping" into a full night's sleep).
+    const hoursFor = (u) => f.hourOverrides?.[u.id] ?? u.hours;
+
     // The household can't collectively sit on the piece more than 16 h/day.
-    const claimedHours = activeUsage.reduce((s, u) => s + u.hours, 0);
+    const claimedHours = activeUsage.reduce((s, u) => s + hoursFor(u), 0);
     const hourScale = claimedHours > MAX_OCCUPIED_HOURS_PER_DAY ? MAX_OCCUPIED_HOURS_PER_DAY / claimedHours : 1;
 
     const humanDaily = activeUsage.reduce((sum, u) => {
       const ratePerHour =
         adults * HUMAN_RATE_PER_HOUR * (1 - u.suppression) +
         children * HUMAN_RATE_PER_HOUR * (1 - u.suppression * CHILD_SUPPRESSION_FACTOR);
-      return sum + u.hours * hourScale * ratePerHour * humanFill;
+      return sum + hoursFor(u) * hourScale * ratePerHour * humanFill;
     }, 0);
 
     // Dogs run on their own schedule, independent of household activities,
