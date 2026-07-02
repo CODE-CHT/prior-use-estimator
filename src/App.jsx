@@ -1,21 +1,12 @@
 import { useState, useMemo } from "react";
 
-function hashSeed(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0) / 4294967295;
-}
-
 const FURNITURE = [
-  { id: "armchair", label: "Armchair", mult: 1.0 },
-  { id: "couch", label: "Couch / Sofa", mult: 1.25 },
-  { id: "sectional", label: "Sectional", mult: 1.6 },
-  { id: "recliner", label: "Recliner", mult: 1.55 },
-  { id: "office", label: "Office Chair", mult: 0.8 },
-  { id: "ottoman", label: "Ottoman", mult: 0.55 },
+  { id: "armchair", label: "Armchair", seats: 1 },
+  { id: "couch", label: "Couch / Sofa", seats: 3 },
+  { id: "sectional", label: "Sectional", seats: 5 },
+  { id: "recliner", label: "Recliner", seats: 1 },
+  { id: "office", label: "Office Chair", seats: 1 },
+  { id: "ottoman", label: "Ottoman", seats: 0.5 },
 ];
 
 const MATERIAL = [
@@ -26,7 +17,7 @@ const MATERIAL = [
   { id: "leather", label: "Genuine Leather", factor: 60 },
 ];
 
-// --- Usage-type weighting, grounded in published flatus-frequency research ---
+// --- Emission rates, grounded in published flatus-frequency research ---
 // Adults pass gas ~32 times/day on average when measured continuously with a
 // wearable sensor (Botasini et al., 2025) [1] — roughly double the ~14/day
 // figure from earlier clinical estimates based on self-report and short
@@ -36,18 +27,20 @@ const MATERIAL = [
 const FLATUS_EVENTS_PER_DAY = 32; // Botasini et al., 2025 [1]
 const FLATUS_EVENTS_PER_DAY_LEGACY = 14; // Tomlin, Lowis, & Read, 1991 [2]
 const WAKING_HOURS = 16;
-const FLATUS_RATE_PER_HOUR = FLATUS_EVENTS_PER_DAY / WAKING_HOURS; // ≈2/hr
+const HUMAN_RATE_PER_HOUR = FLATUS_EVENTS_PER_DAY / WAKING_HOURS; // ≈2/hr
+// Dogs emit at a minimum of 1.5× the human rate (stated model assumption — no
+// wearable-sensor canine study exists yet) and experience no social suppression.
+const DOG_RATE_MULTIPLIER = 1.5;
+const DOG_RATE_PER_HOUR = HUMAN_RATE_PER_HOUR * DOG_RATE_MULTIPLIER; // 3/hr
+// Children emit at the adult rate but suppress roughly half as much.
+const CHILD_SUPPRESSION_FACTOR = 0.5;
+const DAYS_PER_YEAR = 365.25;
 
-// Scaling constant calibrated so the model's overall range matches the
-// estimator's original 0–6000 display scale.
-const ODOR_UNIT = 75;
-
-// Each usage type carries a typical daily duration spent seated on the piece
-// and a social-suppression factor (0 = no inhibition, 1 = total suppression).
-// weight = hours * flatus-rate/hr * (1 - suppression) * ODOR_UNIT
-// Work-from-home sessions run longest (up to 8 hrs/day), so despite heavier
-// suppression during calls, WFH still produces the single largest usage-type
-// contribution in the model — longer seat time outweighs the suppression.
+// Each usage type carries a typical daily duration spent on the piece and a
+// social-suppression factor for adults (0 = no inhibition, 1 = total
+// suppression). Work-from-home sessions run longest (up to 8 hrs/day), so
+// despite heavier suppression during calls, WFH still contributes heavily —
+// longer seat time outweighs the suppression.
 const USAGE_TYPES = [
   { id: "tv", label: "TV / movie marathons", hours: 3, suppression: 0.1 },
   { id: "napping", label: "Napping / sleeping", hours: 1.5, suppression: 0 },
@@ -56,10 +49,7 @@ const USAGE_TYPES = [
   { id: "wfh", label: "Work-from-home seating", hours: 8, suppression: 0.6 },
   { id: "family", label: "Family time (kids + snacks)", hours: 2, suppression: 0.2 },
   { id: "guest", label: "Guest / formal seating only", hours: 0.5, suppression: 0.9 },
-].map((u) => ({
-  ...u,
-  weight: Math.round(u.hours * FLATUS_RATE_PER_HOUR * (1 - u.suppression) * ODOR_UNIT),
-}));
+];
 
 const RETENTION_LEVELS = [
   { key: "low", label: "Low", max: 150, color: "#6E8F72" },
@@ -71,14 +61,19 @@ function retentionFor(factor) {
   return RETENTION_LEVELS.find((r) => factor <= r.max) || RETENTION_LEVELS[RETENTION_LEVELS.length - 1];
 }
 
+// Tier thresholds are lifetime event counts. A typical 5-year family couch
+// lands around 30,000 events, anchoring "Some History".
 const TIERS = [
-  { key: "fresh", label: "Low Concern", max: 800, color: "#6E8F72", note: "Nothing here that should factor into your decision." },
-  { key: "ripe", label: "Some History", max: 2000, color: "#D99A2B", note: "Typical wear for a used piece. A wipe-down and airing out should be plenty." },
-  { key: "elevated", label: "Elevated", max: 4000, color: "#C1622D", note: "Heavier use than average. Worth inspecting cushions and inner padding before buying." },
-  { key: "high", label: "High", max: Infinity, color: "#B4402A", note: "Significant estimated use. Consider a deep clean or reupholstering, or negotiate the price." },
+  { key: "fresh", label: "Low Concern", max: 10000, color: "#6E8F72", note: "Nothing here that should factor into your decision." },
+  { key: "ripe", label: "Some History", max: 50000, color: "#D99A2B", note: "Typical accumulation for a used piece. A wipe-down and airing out should be plenty." },
+  { key: "elevated", label: "Elevated", max: 150000, color: "#C1622D", note: "Heavier accumulation than average. Worth inspecting cushions and inner padding before buying." },
+  { key: "high", label: "High", max: Infinity, color: "#B4402A", note: "Significant estimated accumulation. Consider a deep clean or reupholstering, or negotiate the price." },
 ];
 
-const MAX_SCALE = 6000;
+// Ring gauge maps the FFi onto a log scale: 10² events ≈ empty, 10^6.5 ≈ full.
+const RING_LOG_MIN = 2;
+const RING_LOG_MAX = 6.5;
+
 const DIGIT_HEIGHT = 38;
 const DIGIT_WIDTH = 22;
 
@@ -140,40 +135,58 @@ export default function App() {
   const [material, setMaterial] = useState("fabric");
   const [age, setAge] = useState(5);
   const [owners, setOwners] = useState(1);
-  const [pets, setPets] = useState(false);
+  const [adults, setAdults] = useState(2);
+  const [children, setChildren] = useState(0);
+  const [pets, setPets] = useState(0);
   const [usage, setUsage] = useState(["tv", "napping"]);
   const [revealed, setRevealed] = useState(false);
 
   const toggleUsage = (id) =>
     setUsage((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]));
 
-  const seedKey = `${furniture}|${material}|${age}|${owners}|${pets}|${usage.slice().sort().join(",")}`;
-
   const result = useMemo(() => {
     const f = FURNITURE.find((x) => x.id === furniture);
     const m = MATERIAL.find((x) => x.id === material);
-    const usageWeight = usage.reduce((sum, id) => {
+
+    // Seat capacity caps how much of the household can occupy the piece at
+    // once: a sectional hosts the whole family, an office chair one emitter.
+    const occupants = adults + children + pets;
+    const fillFraction = occupants > 0 ? Math.min(f.seats, occupants) / occupants : 0;
+
+    const dailyEvents = usage.reduce((sum, id) => {
       const u = USAGE_TYPES.find((x) => x.id === id);
-      return sum + (u ? u.weight : 0);
+      if (!u) return sum;
+      const householdRatePerHour =
+        adults * HUMAN_RATE_PER_HOUR * (1 - u.suppression) +
+        children * HUMAN_RATE_PER_HOUR * (1 - u.suppression * CHILD_SUPPRESSION_FACTOR) +
+        pets * DOG_RATE_PER_HOUR;
+      return sum + u.hours * householdRatePerHour * fillFraction;
     }, 0);
 
-    const base = age * 38 + owners * 130 + usageWeight + (pets ? 520 : 0);
-    const jitter = 0.82 + hashSeed(seedKey) * 0.36;
-    const score = Math.max(0, Math.round(base * f.mult * jitter));
+    const ffi = Math.round(dailyEvents * DAYS_PER_YEAR * age);
+
+    // Each previous owner is an undocumented household — the count doesn't
+    // change, but confidence in it does.
+    const uncertaintyPct = 8 + 7 * owners;
+    const ffiLow = Math.round(ffi * (1 - uncertaintyPct / 100));
+    const ffiHigh = Math.round(ffi * (1 + uncertaintyPct / 100));
 
     const retention = retentionFor(m.factor);
 
-    const baseIdx = TIERS.findIndex((t) => score <= t.max);
+    const baseIdx = TIERS.findIndex((t) => ffi <= t.max);
     const idx = baseIdx === -1 ? TIERS.length - 1 : baseIdx;
     const bumpedIdx = retention.key === "high" ? Math.min(idx + 1, TIERS.length - 1) : idx;
     const tier = TIERS[bumpedIdx];
     const bumped = bumpedIdx > idx;
 
-    return { score, tier, retention, bumped, f, m };
-  }, [seedKey, furniture, material, age, owners, pets, usage]);
+    return { ffi, ffiLow, ffiHigh, uncertaintyPct, dailyEvents, tier, retention, bumped, f, m };
+  }, [furniture, material, age, owners, adults, children, pets, usage]);
 
-  const pct = Math.min(result.score / MAX_SCALE, 1);
-  const ringDeg = pct * 360;
+  const ringFill =
+    result.ffi > 0
+      ? Math.min(Math.max((Math.log10(result.ffi) - RING_LOG_MIN) / (RING_LOG_MAX - RING_LOG_MIN), 0), 1)
+      : 0;
+  const ringDeg = ringFill * 360;
 
   return (
     <div className="of-body min-h-screen w-full flex items-start justify-center py-10 px-4" style={{ background: "#F3F0E8" }}>
@@ -181,9 +194,9 @@ export default function App() {
         <div className="mb-5">
           <div className="of-display text-xl" style={{ color: "#211D18" }}>Prior Use Estimator</div>
           <p className="text-sm mt-1" style={{ color: "#6B6656" }}>
-            Answer a few questions about the piece you're considering. This gives a rough estimate of use and odor
-            retention risk, calibrated against published flatus-frequency research [1][2] and the compounds known
-            to drive flatus odor [3] — not a lab measurement of this specific item.
+            Answer a few questions about the piece you're considering. This estimates the total number of flatus
+            events the item has absorbed, calibrated against published flatus-frequency research [1][2] and the
+            compounds known to drive flatus odor [3] — not a lab measurement of this specific item.
           </p>
         </div>
 
@@ -199,13 +212,17 @@ export default function App() {
                 transition: "background 500ms ease",
               }}
             >
-              <div className="absolute rounded-full flex items-center justify-center" style={{ width: 76, height: 76, background: "#FFFFFF" }}>
-                <span className="of-display text-lg" style={{ color: result.tier.color }}>{Math.round(pct * 100)}%</span>
+              <div className="absolute rounded-full flex flex-col items-center justify-center" style={{ width: 76, height: 76, background: "#FFFFFF" }}>
+                <span className="of-display text-lg leading-none" style={{ color: result.tier.color }}>{Math.round(result.dailyEvents)}</span>
+                <span className="text-[10px] mt-0.5" style={{ color: "#9A9384" }}>per day</span>
               </div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wide" style={{ color: "#9A9384" }}>Estimated use score</div>
-              <div className="mt-1.5"><OdometerReadout value={result.score} /></div>
+              <div className="text-xs uppercase tracking-wide" style={{ color: "#9A9384" }}>Lifetime estimate</div>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <OdometerReadout value={result.ffi} />
+                <span className="of-display text-sm" style={{ color: "#9A9384" }}>FFi</span>
+              </div>
               <span className="inline-block mt-2 px-2.5 py-1 rounded-md text-xs of-display" style={{ background: `${result.tier.color}1A`, color: result.tier.color }}>
                 {result.tier.label}
               </span>
@@ -218,9 +235,14 @@ export default function App() {
           </div>
           {result.bumped && (
             <p className="text-xs mt-2" style={{ color: "#9A9384" }}>
-              This rating was raised a level because {result.m.label.toLowerCase()} holds odor longer than the use score alone would suggest.
+              This rating was raised a level because {result.m.label.toLowerCase()} holds odor longer than the event count alone would suggest.
             </p>
           )}
+          <p className="text-xs mt-3" style={{ color: "#B5AF9F" }}>
+            FFi — Flatulence Factor Index: the estimated cumulative number of flatus events this piece has absorbed
+            over its lifetime. Range: {result.ffiLow.toLocaleString()}–{result.ffiHigh.toLocaleString()}{" "}
+            (±{result.uncertaintyPct}%, widening with each undocumented previous owner).
+          </p>
         </div>
 
         <div className="rounded-2xl p-6 space-y-5" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
@@ -250,6 +272,21 @@ export default function App() {
             </div>
           </div>
 
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="text-xs" style={{ color: "#6B6656" }}>Adults: {adults}</label>
+              <input type="range" min="0" max="6" value={adults} onChange={(e) => setAdults(Number(e.target.value))} className="w-full mt-3" />
+            </div>
+            <div>
+              <label className="text-xs" style={{ color: "#6B6656" }}>Children: {children}</label>
+              <input type="range" min="0" max="8" value={children} onChange={(e) => setChildren(Number(e.target.value))} className="w-full mt-3" />
+            </div>
+            <div>
+              <label className="text-xs" style={{ color: "#6B6656" }}>Dogs: {pets}</label>
+              <input type="range" min="0" max="5" value={pets} onChange={(e) => setPets(Number(e.target.value))} className="w-full mt-3" />
+            </div>
+          </div>
+
           <div>
             <label className="text-xs" style={{ color: "#6B6656" }}>Primary use (select all that apply)</label>
             <div className="flex flex-wrap gap-2 mt-2">
@@ -264,13 +301,6 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2" style={{ borderTop: "1px solid #EDE9DF" }}>
-            <span className="text-sm" style={{ color: "#211D18" }}>Known pet household?</span>
-            <button onClick={() => setPets(!pets)} role="switch" aria-checked={pets} className="relative w-11 h-6 rounded-full transition-colors" style={{ background: pets ? "#C1622D" : "#E4DFD6" }}>
-              <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform" style={{ transform: pets ? "translateX(20px)" : "translateX(0)" }} />
-            </button>
-          </div>
-
           <button onClick={() => setRevealed(true)} className="of-display w-full py-3 rounded-xl text-sm text-white mt-1" style={{ background: "#211D18" }}>
             Calculate estimate
           </button>
@@ -280,11 +310,13 @@ export default function App() {
           <div className="of-fade rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
             <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Summary</div>
             <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
-              A {age}-year-old {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, with{" "}
+              A {age}-year-old {result.f.label.toLowerCase()} in {result.m.label.toLowerCase()}, serving a household
+              of {adults} adult{adults === 1 ? "" : "s"}
+              {children > 0 ? `, ${children} ${children === 1 ? "child" : "children"}` : ""}
+              {pets > 0 ? ` and ${pets} dog${pets === 1 ? "" : "s"}` : ""}, with{" "}
               {owners} previous owner{owners === 1 ? "" : "s"}
-              {pets ? " and pet exposure" : ""}
-              {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated use score of{" "}
-              <strong>{result.score.toLocaleString()}</strong> and{" "}
+              {usage.length > 0 ? `, used mainly for ${usage.map((id) => USAGE_TYPES.find((u) => u.id === id)?.label.toLowerCase()).join(", ")}` : ""}, comes back with an estimated{" "}
+              <strong>{result.ffi.toLocaleString()} FFi</strong> (≈{Math.round(result.dailyEvents)} events/day) and{" "}
               <strong>{result.retention.label.toLowerCase()}</strong> odor retention risk from its upholstery.
             </p>
             <p className="text-sm mt-3" style={{ color: result.tier.color }}>{result.tier.note}</p>
@@ -297,15 +329,18 @@ export default function App() {
         <div className="rounded-2xl p-6 mt-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 2px rgba(33,29,24,0.06), 0 8px 24px rgba(33,29,24,0.06)" }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: "#9A9384" }}>Methodology</div>
           <p className="text-sm leading-relaxed" style={{ color: "#4A453A" }}>
-            Usage-type weights assume a baseline of {FLATUS_EVENTS_PER_DAY} flatus events per day spread across a{" "}
-            {WAKING_HOURS}-hour waking day (≈{FLATUS_RATE_PER_HOUR}/hr) [1], adjusted for the typical hours spent
-            seated during each activity and a social-suppression factor (for example, video calls suppress roughly
-            60% of urges during work-from-home use, versus ~90% in front of guests). Because work-from-home
-            sessions run the longest — up to 8 hours a day — they produce the single highest usage-type
-            contribution in the model, even after that suppression is applied. Earlier clinical estimates put the
-            daily baseline closer to {FLATUS_EVENTS_PER_DAY_LEGACY} events [2]. Odor intensity itself tracks
-            hydrogen sulfide concentration rather than gas volume [3], which is why upholstery retention (above) is
-            scored separately from usage.
+            The FFi is a direct event count, not a score. Adults emit a baseline of {FLATUS_EVENTS_PER_DAY} flatus
+            events per day across a {WAKING_HOURS}-hour waking day (≈{HUMAN_RATE_PER_HOUR}/hr) [1]; earlier clinical
+            estimates put that closer to {FLATUS_EVENTS_PER_DAY_LEGACY} [2]. Children emit at the adult rate but
+            suppress roughly half as much; dogs are modeled at {DOG_RATE_MULTIPLIER}× the human rate with no social
+            suppression whatsoever (a stated model assumption — no wearable-sensor canine study exists yet). Each
+            selected activity contributes its typical daily hours, discounted by an adult social-suppression factor
+            (video calls suppress roughly 60% of urges, guests ~90%). Seat count caps concurrent occupancy — a
+            sectional absorbs the whole household at once, while an office chair hosts exactly one emitter — and the
+            daily total is compounded over the item's age. Previous owners don't change the count, only the
+            confidence in it: each undocumented household widens the uncertainty range by ±7%. Odor intensity itself
+            tracks hydrogen sulfide concentration rather than gas volume [3], which is why upholstery retention is
+            scored separately from the count.
           </p>
         </div>
 
